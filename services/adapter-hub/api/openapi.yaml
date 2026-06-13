@@ -1,0 +1,89 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Adapter Hub
+  version: "0.1.0"
+servers:
+  - url: http://localhost:8013
+    description: Adapter Hub
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ok}
+  /ready:
+    get:
+      summary: Readiness probe
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ready}
+  /adapters/status:
+    get:
+      summary: Adapter health (SUPER_ADMIN)
+      responses:
+        "200":
+          description: Adapter statuses
+  /adapters/nid/verify:
+    post:
+      summary: Verify NID (INTERNAL mTLS)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fan, claim]
+              properties:
+                fan: {type: string}
+                claim:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    dob: {type: string, format: date}
+      responses:
+        "200":
+          description: Verification result
+        "503":
+          description: Provider unavailable
+  /adapters/mfi/originate:
+    post:
+      summary: Originate MFI facility (INTERNAL mTLS)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_ref, principal_minor, term_days, score_ref]
+              properties:
+                user_ref: {type: string}
+                principal_minor: {type: integer, format: int64}
+                term_days: {type: integer}
+                score_ref: {type: string}
+      responses:
+        "201":
+          description: Facility originated
+  /adapters/webhooks/{partner}:
+    post:
+      summary: Partner webhook (PARTNER SIGNED)
+      parameters:
+        - in: path
+          name: partner
+          required: true
+          schema: {type: string, example: awash}
+      responses:
+        "200":
+          description: Received

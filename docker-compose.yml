@@ -1,0 +1,483 @@
+# ── Shared anchors ────────────────────────────────────────────────────────────
+
+# Infra health gates (same for prod and dev)
+x-infra-deps: &infra-deps
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+
+# Dev Go service defaults — source bind-mounted, air runs live-reload
+x-go-dev: &go-dev
+  <<: *infra-deps
+  build:
+    context: .
+    dockerfile: Dockerfile.go.dev
+  restart: unless-stopped
+  # Volumes shared by every Go service:
+  #   shared/        — go-kit + events modules (read-only)
+  #   go.work.dev    — workspace file (excludes seed CLI)  mapped as go.work
+  #   .air.toml      — hot-reload config (mapped into the service working dir)
+  #   go_pkg_mod     — module download cache (shared, speeds up first rebuild)
+  # Each service also adds its own  ./services/<name>:/workspace/services/<name>
+  volumes: &go-dev-shared-vols
+    - ./shared:/workspace/shared:ro
+    - ./go.work.dev:/workspace/go.work:ro
+    - go_pkg_mod:/go/pkg/mod
+
+# ── Infrastructure services ────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mesob
+      POSTGRES_PASSWORD: mesob
+      POSTGRES_DB: mesob_identity
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mesob"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:latest
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+# ── Go microservices (all use air for live-reload) ─────────────────────────────
+
+  gateway:
+    <<: *go-dev
+    working_dir: /workspace/services/gateway
+    ports:
+      - "8000:8000"
+    environment:
+      MESOB_GATEWAY_HTTP_PORT: "8000"
+      MESOB_GATEWAY_IDENTITY_URL: "http://identity:8001"
+      MESOB_GATEWAY_LEDGER_URL: "http://ledger:8002"
+      MESOB_GATEWAY_PAYMENTS_URL: "http://payments:8007"
+      MESOB_GATEWAY_LOANS_URL: "http://loans:8006"
+      MESOB_GATEWAY_IQUB_URL: "http://iqub:8003"
+      MESOB_GATEWAY_IDDIR_URL: "http://iddir:8004"
+      MESOB_GATEWAY_AGENT_URL: "http://agent:8005"
+      MESOB_GATEWAY_BRANCH_URL: "http://branch:8008"
+      MESOB_GATEWAY_ADMIN_URL: "http://admin:8009"
+      MESOB_GATEWAY_USSD_URL: "http://ussd:8010"
+      MESOB_GATEWAY_NOTIFICATION_URL: "http://notification:8012"
+      MESOB_GATEWAY_REDIS_URL: "redis:6379"
+      MESOB_GATEWAY_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/gateway:/workspace/services/gateway
+      - ./.air.toml:/workspace/services/gateway/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  identity:
+    <<: *go-dev
+    working_dir: /workspace/services/identity
+    ports:
+      - "8001:8001"
+      - "9101:9101"
+    environment:
+      MESOB_IDENTITY_HTTP_PORT: "8001"
+      MESOB_IDENTITY_GRPC_PORT: "9101"
+      MESOB_IDENTITY_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_identity?sslmode=disable"
+      MESOB_IDENTITY_REDIS_URL: "redis:6379"
+      MESOB_IDENTITY_KAFKA_BROKERS: "kafka:9092"
+      MESOB_IDENTITY_LEDGER_GRPC: "ledger:9102"
+      MESOB_IDENTITY_ADAPTER_GRPC: "adapter-hub:9113"
+      MESOB_IDENTITY_NOTIFY_GRPC: "notification:9112"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/identity:/workspace/services/identity
+      - ./.air.toml:/workspace/services/identity/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  ledger:
+    <<: *go-dev
+    working_dir: /workspace/services/ledger
+    ports:
+      - "8002:8002"
+      - "9102:9102"
+    environment:
+      MESOB_LEDGER_HTTP_PORT: "8002"
+      MESOB_LEDGER_GRPC_PORT: "9102"
+      MESOB_LEDGER_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_ledger?sslmode=disable"
+      MESOB_LEDGER_KAFKA_BROKERS: "kafka:9092"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/ledger:/workspace/services/ledger
+      - ./.air.toml:/workspace/services/ledger/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  iqub:
+    <<: *go-dev
+    working_dir: /workspace/services/iqub
+    ports:
+      - "8003:8003"
+      - "9103:9103"
+    environment:
+      GOWORK: "off"
+      MESOB_IQUB_HTTP_PORT: "8003"
+      MESOB_IQUB_GRPC_PORT: "9103"
+      MESOB_IQUB_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_iqub?sslmode=disable"
+      MESOB_IQUB_KAFKA_BROKERS: "kafka:9092"
+      MESOB_IQUB_REDIS_URL: "redis:6379"
+      MESOB_IQUB_LEDGER_GRPC: "ledger:9102"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/iqub:/workspace/services/iqub
+      - ./.air.toml:/workspace/services/iqub/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  iddir:
+    <<: *go-dev
+    working_dir: /workspace/services/iddir
+    ports:
+      - "8004:8004"
+      - "9104:9104"
+    environment:
+      GOWORK: "off"
+      MESOB_IDDIR_HTTP_PORT: "8004"
+      MESOB_IDDIR_GRPC_PORT: "9104"
+      MESOB_IDDIR_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_iddir?sslmode=disable"
+      MESOB_IDDIR_KAFKA_BROKERS: "kafka:9092"
+      MESOB_IDDIR_LEDGER_GRPC: "ledger:9102"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/iddir:/workspace/services/iddir
+      - ./.air.toml:/workspace/services/iddir/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  agent:
+    <<: *go-dev
+    working_dir: /workspace/services/agent
+    ports:
+      - "8005:8005"
+      - "9105:9105"
+    environment:
+      MESOB_AGENT_HTTP_PORT: "8005"
+      MESOB_AGENT_GRPC_PORT: "9105"
+      MESOB_AGENT_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_agent?sslmode=disable"
+      MESOB_AGENT_KAFKA_BROKERS: "kafka:9092"
+      MESOB_AGENT_REDIS_URL: "redis:6379"
+      MESOB_AGENT_LEDGER_GRPC: "ledger:9102"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/agent:/workspace/services/agent
+      - ./.air.toml:/workspace/services/agent/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  loans:
+    <<: *go-dev
+    working_dir: /workspace/services/loans
+    ports:
+      - "8006:8006"
+      - "9106:9106"
+    environment:
+      GOWORK: "off"
+      MESOB_LOANS_HTTP_PORT: "8006"
+      MESOB_LOANS_GRPC_PORT: "9106"
+      MESOB_LOANS_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_loans?sslmode=disable"
+      MESOB_LOANS_KAFKA_BROKERS: "kafka:9092"
+      MESOB_LOANS_LEDGER_GRPC: "ledger:9102"
+      MESOB_LOANS_SCORING_URL: "http://scoring:9001"
+      MESOB_LOANS_ADAPTER_GRPC: "adapter-hub:9113"
+      MESOB_LOANS_FRAUD_URL: "http://fraud:9002"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/loans:/workspace/services/loans
+      - ./.air.toml:/workspace/services/loans/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  payments:
+    <<: *go-dev
+    working_dir: /workspace/services/payments
+    ports:
+      - "8007:8007"
+      - "9107:9107"
+    environment:
+      MESOB_PAYMENTS_HTTP_PORT: "8007"
+      MESOB_PAYMENTS_GRPC_PORT: "9107"
+      MESOB_PAYMENTS_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_payments?sslmode=disable"
+      MESOB_PAYMENTS_KAFKA_BROKERS: "kafka:9092"
+      MESOB_PAYMENTS_LEDGER_GRPC: "ledger:9102"
+      MESOB_PAYMENTS_FRAUD_URL: "http://fraud:9002"
+      MESOB_PAYMENTS_ADAPTER_GRPC: "adapter-hub:9113"
+      MESOB_PAYMENTS_IDENTITY_GRPC: "identity:9101"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/payments:/workspace/services/payments
+      - ./.air.toml:/workspace/services/payments/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  branch:
+    <<: *go-dev
+    working_dir: /workspace/services/branch
+    ports:
+      - "8008:8008"
+      - "9108:9108"
+    environment:
+      MESOB_BRANCH_HTTP_PORT: "8008"
+      MESOB_BRANCH_GRPC_PORT: "9108"
+      MESOB_BRANCH_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_branch?sslmode=disable"
+      MESOB_BRANCH_KAFKA_BROKERS: "kafka:9092"
+      MESOB_BRANCH_REDIS_URL: "redis:6379"
+      MESOB_BRANCH_LEDGER_GRPC: "ledger:9102"
+      MESOB_BRANCH_IDENTITY_GRPC: "identity:9101"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/branch:/workspace/services/branch
+      - ./.air.toml:/workspace/services/branch/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  admin:
+    <<: *go-dev
+    working_dir: /workspace/services/admin
+    ports:
+      - "8009:8009"
+      - "9109:9109"
+    environment:
+      MESOB_ADMIN_HTTP_PORT: "8009"
+      MESOB_ADMIN_GRPC_PORT: "9109"
+      MESOB_ADMIN_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_admin?sslmode=disable"
+      MESOB_ADMIN_KAFKA_BROKERS: "kafka:9092"
+      MESOB_ADMIN_REDIS_URL: "redis:6379"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/admin:/workspace/services/admin
+      - ./.air.toml:/workspace/services/admin/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  ussd:
+    <<: *go-dev
+    working_dir: /workspace/services/ussd
+    ports:
+      - "8010:8010"
+      - "9110:9110"
+    environment:
+      MESOB_USSD_HTTP_PORT: "8010"
+      MESOB_USSD_GRPC_PORT: "9110"
+      MESOB_USSD_REDIS_URL: "redis:6379"
+      MESOB_USSD_IDENTITY_GRPC: "identity:9101"
+      MESOB_USSD_PAYMENTS_GRPC: "payments:9107"
+      MESOB_USSD_LOANS_GRPC: "loans:9106"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/ussd:/workspace/services/ussd
+      - ./.air.toml:/workspace/services/ussd/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  telegram:
+    <<: *go-dev
+    working_dir: /workspace/services/telegram
+    ports:
+      - "8011:8011"
+      - "9111:9111"
+    environment:
+      MESOB_TELEGRAM_HTTP_PORT: "8011"
+      MESOB_TELEGRAM_GRPC_PORT: "9111"
+      MESOB_TELEGRAM_REDIS_URL: "redis:6379"
+      MESOB_TELEGRAM_BOT_TOKEN: "${MESOB_TELEGRAM_BOT_TOKEN:-demo-token}"
+      MESOB_TELEGRAM_IDENTITY_GRPC: "identity:9101"
+      MESOB_TELEGRAM_PAYMENTS_GRPC: "payments:9107"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/telegram:/workspace/services/telegram
+      - ./.air.toml:/workspace/services/telegram/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  notification:
+    <<: *go-dev
+    working_dir: /workspace/services/notification
+    ports:
+      - "8012:8012"
+      - "9112:9112"
+    environment:
+      MESOB_NOTIFICATION_HTTP_PORT: "8012"
+      MESOB_NOTIFICATION_GRPC_PORT: "9112"
+      MESOB_NOTIFICATION_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_notification?sslmode=disable"
+      MESOB_NOTIFICATION_KAFKA_BROKERS: "kafka:9092"
+      MESOB_NOTIFICATION_REDIS_URL: "redis:6379"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/notification:/workspace/services/notification
+      - ./.air.toml:/workspace/services/notification/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+  adapter-hub:
+    <<: *go-dev
+    working_dir: /workspace/services/adapter-hub
+    ports:
+      - "8013:8013"
+      - "9113:9113"
+    environment:
+      MESOB_ADAPTER_HTTP_PORT: "8013"
+      MESOB_ADAPTER_GRPC_PORT: "9113"
+      MESOB_ADAPTER_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_adapters?sslmode=disable"
+      MESOB_ADAPTER_NID_MODE: "DEMO"
+      MESOB_ADAPTER_MFI_MODE: "DEMO"
+      MESOB_CORS_ORIGIN: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+    volumes:
+      - ./shared:/workspace/shared:ro
+      - ./go.work.dev:/workspace/go.work:ro
+      - ./services/adapter-hub:/workspace/services/adapter-hub
+      - ./.air.toml:/workspace/services/adapter-hub/.air.toml:ro
+      - go_pkg_mod:/go/pkg/mod
+
+# ── Python AI services ─────────────────────────────────────────────────────────
+
+  scoring:
+    build:
+      context: ./ai
+      dockerfile: scoring/Dockerfile
+    ports:
+      - "9001:9001"
+    environment:
+      MESOB_SCORING_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_scoring?sslmode=disable"
+      MESOB_SCORING_REDIS_URL: "redis://redis:6379/0"
+      MESOB_SCORING_KAFKA_BROKERS: "kafka:9092"
+      MESOB_SCORING_PORT: "9001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  fraud:
+    build:
+      context: ./ai
+      dockerfile: fraud/Dockerfile
+    ports:
+      - "9002:9002"
+    environment:
+      MESOB_FRAUD_DB_URL: "postgres://mesob:mesob@postgres:5432/mesob_fraud?sslmode=disable"
+      MESOB_FRAUD_REDIS_URL: "redis://redis:6379/1"
+      MESOB_FRAUD_KAFKA_BROKERS: "kafka:9092"
+      MESOB_FRAUD_PORT: "9002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+# ── Frontend ───────────────────────────────────────────────────────────────────
+
+  web-console:
+    build:
+      context: ./web/console
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_GATEWAY_URL: "http://localhost:8000"
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ./web/console:/app
+      - console_node_modules:/app/node_modules
+      - console_next_cache:/app/.next
+    depends_on:
+      - gateway
+
+# ── Swagger UI — single-page full API at http://localhost:8080 ────────────────
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    environment:
+      # Disable the default petstore URL so the page loads cleanly
+      SWAGGER_JSON_URL: ""
+    volumes:
+      # Single combined spec — all 14 services + DB schema on one page
+      - ./docs/openapi-combined.yaml:/usr/share/nginx/html/specs/combined.yaml:ro
+      # Per-service specs kept for reference / direct use
+      - ./services/gateway/api/openapi.yaml:/usr/share/nginx/html/specs/gateway.yaml:ro
+      - ./services/identity/api/openapi.yaml:/usr/share/nginx/html/specs/identity.yaml:ro
+      - ./services/ledger/api/openapi.yaml:/usr/share/nginx/html/specs/ledger.yaml:ro
+      - ./services/iqub/api/openapi.yaml:/usr/share/nginx/html/specs/iqub.yaml:ro
+      - ./services/iddir/api/openapi.yaml:/usr/share/nginx/html/specs/iddir.yaml:ro
+      - ./services/agent/api/openapi.yaml:/usr/share/nginx/html/specs/agent.yaml:ro
+      - ./services/loans/api/openapi.yaml:/usr/share/nginx/html/specs/loans.yaml:ro
+      - ./services/payments/api/openapi.yaml:/usr/share/nginx/html/specs/payments.yaml:ro
+      - ./services/branch/api/openapi.yaml:/usr/share/nginx/html/specs/branch.yaml:ro
+      - ./services/admin/api/openapi.yaml:/usr/share/nginx/html/specs/admin.yaml:ro
+      - ./services/ussd/api/openapi.yaml:/usr/share/nginx/html/specs/ussd.yaml:ro
+      - ./services/telegram/api/openapi.yaml:/usr/share/nginx/html/specs/telegram.yaml:ro
+      - ./services/notification/api/openapi.yaml:/usr/share/nginx/html/specs/notification.yaml:ro
+      - ./services/adapter-hub/api/openapi.yaml:/usr/share/nginx/html/specs/adapter-hub.yaml:ro
+      # Custom initializer — loads combined.yaml as single spec (no dropdown)
+      - ./docs/swagger-initializer.js:/usr/share/nginx/html/swagger-initializer.js:ro
+
+# ── Named volumes ──────────────────────────────────────────────────────────────
+
+volumes:
+  postgres_data:
+  console_node_modules:
+  console_next_cache:
+  go_pkg_mod:          # shared Go module download cache across all 14 Go services

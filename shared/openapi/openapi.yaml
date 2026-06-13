@@ -1,0 +1,35 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Wallet API
+  version: "1.0.0"
+  description: Aggregated API — generated from per-service api/openapi.yaml files
+paths: {}
+components:
+  schemas:
+    MetaBlock:
+      type: object
+      required: [request_id, trace_id]
+      properties:
+        request_id:
+          type: string
+        trace_id:
+          type: string
+        next_cursor:
+          type: string
+    ErrorBlock:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string

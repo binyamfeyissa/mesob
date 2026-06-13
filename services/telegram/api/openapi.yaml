@@ -1,0 +1,45 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Telegram Bot Service
+  version: "0.1.0"
+servers:
+  - url: http://localhost:8011
+    description: Telegram Service
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ok}
+  /ready:
+    get:
+      summary: Readiness probe
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ready}
+  /telegram/webhook:
+    post:
+      summary: Telegram Bot API webhook callback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Telegram Update object (as-is from Telegram)
+      responses:
+        "200":
+          description: Handled

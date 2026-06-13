@@ -1,0 +1,94 @@
+syntax = "proto3";
+package ledger;
+option go_package = "github.com/mesob-wallet/ledger/internal/transport/grpc/pb;pb";
+
+service LedgerService {
+  rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
+  rpc PostTransaction(PostTransactionRequest) returns (PostTransactionResponse);
+  rpc ReverseTransaction(ReverseRequest) returns (ReverseResponse);
+  rpc GetBalance(GetBalanceRequest) returns (BalanceResponse);
+  rpc GetEntries(GetEntriesRequest) returns (GetEntriesResponse);
+}
+
+message CreateAccountRequest {
+  string owner_type = 1;
+  string owner_id   = 2;
+  string type       = 3;
+  string currency   = 4;
+}
+
+message CreateAccountResponse {
+  string account_id = 1;
+  string status     = 2;
+}
+
+message EntryRequest {
+  string account_id    = 1;
+  string direction     = 2; // "D" or "C"
+  int64  amount_minor  = 3;
+}
+
+message PostTransactionRequest {
+  string idempotency_key = 1;
+  string type            = 2;
+  string initiated_by    = 3;
+  string channel         = 4;
+  repeated EntryRequest entries = 5;
+}
+
+message BalanceEntry {
+  string account_id    = 1;
+  int64  balance_minor = 2;
+  string currency      = 3;
+}
+
+message PostTransactionResponse {
+  string transaction_id = 1;
+  string status         = 2;
+  string posted_at      = 3;
+  repeated BalanceEntry balances = 4;
+}
+
+message ReverseRequest {
+  string transaction_id  = 1;
+  string idempotency_key = 2;
+  string reason          = 3;
+  string authorised_by   = 4;
+}
+
+message ReverseResponse {
+  string reversal_txn_id = 1;
+  string status          = 2;
+}
+
+message GetBalanceRequest {
+  string account_id = 1;
+}
+
+message BalanceResponse {
+  string account_id    = 1;
+  int64  balance_minor = 2;
+  string currency      = 3;
+  string as_of         = 4;
+}
+
+message GetEntriesRequest {
+  string account_id = 1;
+  int32  limit      = 2;
+  string cursor     = 3;
+  string from       = 4;
+  string to         = 5;
+}
+
+message LedgerEntry {
+  string entry_id      = 1;
+  string transaction_id = 2;
+  string direction      = 3;
+  int64  amount_minor   = 4;
+  string created_at     = 5;
+}
+
+message GetEntriesResponse {
+  repeated LedgerEntry entries    = 1;
+  string               next_cursor = 2;
+}

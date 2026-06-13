@@ -1,0 +1,42 @@
+openapi: "3.1.0"
+info:
+  title: Mesob USSD Engine
+  version: "0.1.0"
+paths:
+  /ussd/callback:
+    post:
+      summary: USSD gateway callback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, msisdn, input, service_code]
+              properties:
+                session_id: {type: string}
+                msisdn: {type: string}
+                input: {type: string}
+                service_code: {type: string}
+      responses:
+        "200":
+          description: USSD response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  continue: {type: boolean}
+  /ussd/menus:
+    get:
+      summary: Get menu definitions
+      responses:
+        "200":
+          description: Menu definitions
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK

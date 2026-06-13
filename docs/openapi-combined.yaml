@@ -1,0 +1,1748 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Wallet — Full API
+  version: "1.0.0"
+  description: |
+    Complete API reference for all Mesob Wallet microservices on one page.
+
+    Each operation's **"Try it out"** button calls the service directly at its own port.
+    To call via the gateway instead, use `http://localhost:8000/v1/<service>/...`.
+
+    | Service | Direct Port | Via Gateway prefix |
+    |---------|-------------|-------------------|
+    | Gateway | :8000 | — |
+    | Identity | :8001 | `/v1/identity/` |
+    | Ledger | :8002 | `/v1/ledger/` |
+    | Iqub | :8003 | `/v1/iqub/` |
+    | Iddir | :8004 | `/v1/iddir/` |
+    | Agent | :8005 | `/v1/agent/` |
+    | Loans | :8006 | `/v1/loans/` |
+    | Payments | :8007 | `/v1/payments/` |
+    | Branch | :8008 | `/v1/branch/` |
+    | Admin | :8009 | `/v1/admin/` |
+    | USSD | :8010 | `/v1/ussd/` |
+    | Telegram | :8011 | not routed |
+    | Notification | :8012 | not routed |
+    | Adapter Hub | :8013 | not routed |
+
+servers:
+  - url: http://localhost:8000
+    description: Gateway (default)
+
+tags:
+  - name: Health
+    description: Liveness and readiness probes — select the target service from the server dropdown in each operation.
+  - name: Identity
+    description: |
+      Authentication, registration, KYC, and user profile management.
+      **Direct:** `http://localhost:8001` | **Via Gateway:** `http://localhost:8000/v1/identity/...`
+  - name: Ledger
+    description: |
+      Internal double-entry ledger. All writes are balanced by a PostgreSQL `CONSTRAINT TRIGGER`.
+      **Direct:** `http://localhost:8002` | **Via Gateway:** `http://localhost:8000/v1/ledger/...`
+  - name: Payments
+    description: |
+      P2P transfers, merchant payments, and bill payments.
+      **Direct:** `http://localhost:8007` | **Via Gateway:** `http://localhost:8000/v1/payments/...`
+  - name: Loans
+    description: |
+      Micro-loan origination, eligibility, and repayments.
+      **Direct:** `http://localhost:8006` | **Via Gateway:** `http://localhost:8000/v1/loans/...`
+  - name: Iqub
+    description: |
+      Rotating savings circles (equb / rotating credit association).
+      **Direct:** `http://localhost:8003` | **Via Gateway:** `http://localhost:8000/v1/iqub/...`
+  - name: Iddir
+    description: |
+      Mutual insurance burial societies.
+      **Direct:** `http://localhost:8004` | **Via Gateway:** `http://localhost:8000/v1/iddir/...`
+  - name: Agent
+    description: |
+      Cash-in / cash-out agent network.
+      **Direct:** `http://localhost:8005` | **Via Gateway:** `http://localhost:8000/v1/agent/...`
+  - name: Branch
+    description: |
+      Branch officer operations — KYC queue, agent approvals, settlements, disputes, reconciliation.
+      **Direct:** `http://localhost:8008` | **Via Gateway:** `http://localhost:8000/v1/branch/...`
+  - name: Admin
+    description: |
+      Operator dashboard, feature flags, config management, fraud alerts, and audit log.
+      **Direct:** `http://localhost:8009` | **Via Gateway:** `http://localhost:8000/v1/admin/...`
+  - name: USSD
+    description: |
+      USSD session engine for feature-phone access.
+      **Direct:** `http://localhost:8010` | **Via Gateway:** `http://localhost:8000/v1/ussd/...`
+  - name: Telegram
+    description: |
+      Telegram bot webhook receiver. **Direct only:** `http://localhost:8011`
+  - name: Notification
+    description: |
+      SMS / push notification delivery. **Direct only:** `http://localhost:8012`
+  - name: Adapter Hub
+    description: |
+      Third-party integrations — NID verification, MFI loan origination, partner webhooks.
+      **Direct only:** `http://localhost:8013`
+  - name: Database Schema
+    description: |
+      PostgreSQL 16 table catalogue across all service databases.
+      See `GET /docs/db-schema` for full column-level reference.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    MetaBlock:
+      type: object
+      required: [request_id]
+      properties:
+        request_id: {type: string}
+        trace_id: {type: string}
+        next_cursor: {type: string}
+    ErrorBlock:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: {type: string}
+              message: {type: string}
+
+paths:
+
+  # ── Health / Readiness ────────────────────────────────────────────────────────
+
+  /health:
+    servers:
+      - url: http://localhost:8000
+        description: Gateway :8000
+      - url: http://localhost:8010
+        description: USSD :8010
+      - url: http://localhost:8011
+        description: Telegram :8011
+      - url: http://localhost:8012
+        description: Notification :8012
+      - url: http://localhost:8013
+        description: Adapter Hub :8013
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Service alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ok}
+
+  /ready:
+    servers:
+      - url: http://localhost:8000
+        description: Gateway :8000
+      - url: http://localhost:8010
+        description: USSD :8010
+      - url: http://localhost:8011
+        description: Telegram :8011
+      - url: http://localhost:8012
+        description: Notification :8012
+      - url: http://localhost:8013
+        description: Adapter Hub :8013
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      responses:
+        "200":
+          description: Service ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ready}
+
+  # ── Identity ──────────────────────────────────────────────────────────────────
+
+  /identity/register:
+    servers:
+      - url: http://localhost:8001
+        description: Identity :8001
+    post:
+      tags: [Identity]
+      summary: Start registration — send OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [msisdn]
+              properties:
+                msisdn: {type: string, example: "+251912345678"}
+                region_id: {type: string, format: uuid}
+                lang: {type: string, enum: [am, om, ti, en], default: am}
+      responses:
+        "202":
+          description: OTP sent
+
+  /identity/login:
+    servers:
+      - url: http://localhost:8001
+        description: Identity :8001
+    post:
+      tags: [Identity]
+      summary: Authenticate with MSISDN + PIN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [msisdn, pin]
+              properties:
+                msisdn: {type: string, example: "+251912345678"}
+                pin: {type: string, example: "1234"}
+      responses:
+        "200":
+          description: JWT tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: {type: string}
+                  refresh_token: {type: string}
+                  expires_in: {type: integer}
+
+  /identity/token/refresh:
+    servers:
+      - url: http://localhost:8001
+        description: Identity :8001
+    post:
+      tags: [Identity]
+      summary: Refresh access token using refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string}
+      responses:
+        "200":
+          description: New access token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: {type: string}
+                  expires_in: {type: integer}
+                  kyc_tier: {type: integer}
+
+  /identity/logout:
+    servers:
+      - url: http://localhost:8001
+        description: Identity :8001
+    post:
+      tags: [Identity]
+      summary: Revoke session tokens
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Logged out
+
+  /identity/me:
+    servers:
+      - url: http://localhost:8001
+        description: Identity :8001
+    get:
+      tags: [Identity]
+      summary: Get current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kyc_tier: {type: integer}
+                  lang: {type: string}
+                  msisdn: {type: string}
+
+  /identity/me/language:
+    servers:
+      - url: http://localhost:8001
+        description: Identity :8001
+    patch:
+      tags: [Identity]
+      summary: Update preferred language
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lang]
+              properties:
+                lang: {type: string, enum: [am, om, ti, en]}
+      responses:
+        "204":
+          description: Language updated
+
+  /identity/pin/change:
+    servers:
+      - url: http://localhost:8001
+        description: Identity :8001
+    post:
+      tags: [Identity]
+      summary: Change PIN
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_pin, new_pin]
+              properties:
+                old_pin: {type: string}
+                new_pin: {type: string}
+      responses:
+        "204":
+          description: PIN changed
+
+  /identity/kyc/upgrade:
+    servers:
+      - url: http://localhost:8001
+        description: Identity :8001
+    post:
+      tags: [Identity]
+      summary: Request KYC tier upgrade
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fan: {type: string, description: "Fayda Account Number (NID)"}
+                full_name: {type: string}
+                dob: {type: string, format: date}
+      responses:
+        "202":
+          description: Submitted for branch review
+
+  # ── Ledger ────────────────────────────────────────────────────────────────────
+
+  /ledger/accounts:
+    servers:
+      - url: http://localhost:8002
+        description: Ledger :8002
+    post:
+      tags: [Ledger]
+      summary: Create a ledger account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner_type, owner_id, type]
+              properties:
+                owner_type: {type: string, enum: [USER, AGENT, SYSTEM]}
+                owner_id: {type: string, format: uuid}
+                type: {type: string, enum: [WALLET, FLOAT, POOL, FEE]}
+                currency: {type: string, default: ETB}
+      responses:
+        "201":
+          description: Account created
+
+  /ledger/accounts/{id}/balance:
+    servers:
+      - url: http://localhost:8002
+        description: Ledger :8002
+    get:
+      tags: [Ledger]
+      summary: Get current balance
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Balance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account_id: {type: string}
+                  balance_minor: {type: integer, format: int64}
+                  currency: {type: string}
+
+  /ledger/accounts/{id}/entries:
+    servers:
+      - url: http://localhost:8002
+        description: Ledger :8002
+    get:
+      tags: [Ledger]
+      summary: Paginated entry history for an account
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+        - in: query
+          name: cursor
+          schema: {type: string}
+        - in: query
+          name: limit
+          schema: {type: integer, default: 50}
+      responses:
+        "200":
+          description: Entry list
+
+  /ledger/transactions:
+    servers:
+      - url: http://localhost:8002
+        description: Ledger :8002
+    post:
+      tags: [Ledger]
+      summary: Post a balanced transaction (double-entry)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, idempotency_key, entries]
+              properties:
+                type: {type: string}
+                idempotency_key: {type: string}
+                entries:
+                  type: array
+                  items:
+                    type: object
+                    required: [account_id, direction, amount_minor]
+                    properties:
+                      account_id: {type: string, format: uuid}
+                      direction: {type: string, enum: [D, C]}
+                      amount_minor: {type: integer, format: int64}
+      responses:
+        "201":
+          description: Transaction posted
+
+  /ledger/transactions/{id}/rev:
+    servers:
+      - url: http://localhost:8002
+        description: Ledger :8002
+    post:
+      tags: [Ledger]
+      summary: Reverse a posted transaction
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+      responses:
+        "201":
+          description: Reversal transaction posted
+
+  # ── Payments ──────────────────────────────────────────────────────────────────
+
+  /payments/merchants/{id}:
+    servers:
+      - url: http://localhost:8007
+        description: Payments :8007
+    get:
+      tags: [Payments]
+      summary: Get merchant details
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Merchant details
+
+  /payments/p2p:
+    servers:
+      - url: http://localhost:8007
+        description: Payments :8007
+    post:
+      tags: [Payments]
+      summary: Person-to-person transfer (fraud-screened, fail-closed)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_msisdn, amount_minor, idempotency_key]
+              properties:
+                to_msisdn: {type: string, example: "+251987654321"}
+                amount_minor: {type: integer, format: int64, example: 5000}
+                note: {type: string}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Transfer initiated
+
+  /payments/merchant:
+    servers:
+      - url: http://localhost:8007
+        description: Payments :8007
+    post:
+      tags: [Payments]
+      summary: Pay merchant with commission split
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchant_id, amount_minor, idempotency_key]
+              properties:
+                merchant_id: {type: string, format: uuid}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Payment processed
+
+  /payments/bill:
+    servers:
+      - url: http://localhost:8007
+        description: Payments :8007
+    post:
+      tags: [Payments]
+      summary: Pay utility bill via adapter hub
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [biller_id, reference, amount_minor, idempotency_key]
+              properties:
+                biller_id: {type: string, format: uuid}
+                reference: {type: string}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "202":
+          description: Bill payment queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  biller_ref: {type: string}
+                  status: {type: string}
+                  transaction_id: {type: string}
+
+  # ── Loans ─────────────────────────────────────────────────────────────────────
+
+  /loans/eligibility:
+    servers:
+      - url: http://localhost:8006
+        description: Loans :8006
+    get:
+      tags: [Loans]
+      summary: Check loan eligibility for current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Eligibility result
+
+  /loans:
+    servers:
+      - url: http://localhost:8006
+        description: Loans :8006
+    get:
+      tags: [Loans]
+      summary: List user's active loans
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Loan list
+
+  /loans/apply:
+    servers:
+      - url: http://localhost:8006
+        description: Loans :8006
+    post:
+      tags: [Loans]
+      summary: Apply for a micro-loan
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_minor, term_days, idempotency_key]
+              properties:
+                amount_minor: {type: integer, format: int64}
+                term_days: {type: integer, example: 30}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Loan created
+
+  /loans/{id}/repay:
+    servers:
+      - url: http://localhost:8006
+        description: Loans :8006
+    post:
+      tags: [Loans]
+      summary: Make a loan repayment
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_minor, idempotency_key]
+              properties:
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "200":
+          description: Repayment applied
+
+  # ── Iqub ──────────────────────────────────────────────────────────────────────
+
+  /iqub/groups:
+    servers:
+      - url: http://localhost:8003
+        description: Iqub :8003
+    get:
+      tags: [Iqub]
+      summary: List user's Iqub groups
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Group list
+    post:
+      tags: [Iqub]
+      summary: Create rotating savings group
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, cycle_minor, frequency, member_limit]
+              properties:
+                name: {type: string}
+                cycle_minor: {type: integer, format: int64, description: Contribution per cycle in minor units}
+                frequency: {type: string, enum: [WEEKLY, BIWEEKLY, MONTHLY]}
+                member_limit: {type: integer, default: 20}
+                payout_order: {type: string, enum: [RANDOM, SEQUENTIAL], default: RANDOM}
+      responses:
+        "201":
+          description: Group created
+
+  /iqub/groups/{id}:
+    servers:
+      - url: http://localhost:8003
+        description: Iqub :8003
+    get:
+      tags: [Iqub]
+      summary: Get Iqub group details
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Group details
+
+  /iqub/groups/{id}/members:
+    servers:
+      - url: http://localhost:8003
+        description: Iqub :8003
+    post:
+      tags: [Iqub]
+      summary: Add member to group (leader only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: {type: string, format: uuid}
+      responses:
+        "201":
+          description: Member added
+
+  /iqub/groups/{id}/contribute:
+    servers:
+      - url: http://localhost:8003
+        description: Iqub :8003
+    post:
+      tags: [Iqub]
+      summary: Make cycle contribution
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cycle_id, idempotency_key]
+              properties:
+                cycle_id: {type: string, format: uuid}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Contribution recorded
+
+  /iqub/cycles/{id}/close:
+    servers:
+      - url: http://localhost:8003
+        description: Iqub :8003
+    post:
+      tags: [Iqub]
+      summary: Close a savings cycle and disburse payout
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Cycle closed
+
+  # ── Iddir ─────────────────────────────────────────────────────────────────────
+
+  /iddir/groups:
+    servers:
+      - url: http://localhost:8004
+        description: Iddir :8004
+    post:
+      tags: [Iddir]
+      summary: Create mutual insurance group
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, premium_minor, frequency, benefit_minor]
+              properties:
+                name: {type: string}
+                premium_minor: {type: integer, format: int64}
+                frequency: {type: string, enum: [MONTHLY, QUARTERLY]}
+                benefit_minor: {type: integer, format: int64}
+      responses:
+        "201":
+          description: Group created
+
+  /iddir/groups/{id}/premium:
+    servers:
+      - url: http://localhost:8004
+        description: Iddir :8004
+    post:
+      tags: [Iddir]
+      summary: Pay mutual insurance premium
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period, idempotency_key]
+              properties:
+                period: {type: string, example: "2026-06", description: "YYYY-MM"}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Premium recorded
+
+  /iddir/groups/{id}/claims:
+    servers:
+      - url: http://localhost:8004
+        description: Iddir :8004
+    post:
+      tags: [Iddir]
+      summary: File an insurance claim
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, description]
+              properties:
+                type: {type: string, enum: [DEATH, DISABILITY, HOSPITALIZATION]}
+                description: {type: string}
+                evidence_ref: {type: string}
+      responses:
+        "201":
+          description: Claim submitted
+
+  /iddir/groups/{id}/claims/{cid}:
+    servers:
+      - url: http://localhost:8004
+        description: Iddir :8004
+    get:
+      tags: [Iddir]
+      summary: Get claim status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: cid
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Claim details
+
+  # ── Agent ─────────────────────────────────────────────────────────────────────
+
+  /agent/float:
+    servers:
+      - url: http://localhost:8005
+        description: Agent :8005
+    get:
+      tags: [Agent]
+      summary: Get agent float balance
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Float balance
+
+  /agent/onboard:
+    servers:
+      - url: http://localhost:8005
+        description: Agent :8005
+    post:
+      tags: [Agent]
+      summary: Submit agent onboarding request
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [region_id, fan]
+              properties:
+                region_id: {type: string, format: uuid}
+                fan: {type: string, description: Fayda Account Number}
+                business_name: {type: string}
+      responses:
+        "202":
+          description: Onboarding submitted for branch review
+
+  /agent/cash-in:
+    servers:
+      - url: http://localhost:8005
+        description: Agent :8005
+    post:
+      tags: [Agent]
+      summary: Agent disburses cash to customer wallet
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_msisdn, amount_minor, idempotency_key]
+              properties:
+                customer_msisdn: {type: string, example: "+251912345678"}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Cash-in completed
+
+  /agent/cash-out:
+    servers:
+      - url: http://localhost:8005
+        description: Agent :8005
+    post:
+      tags: [Agent]
+      summary: Agent collects cash from customer wallet
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_msisdn, amount_minor, idempotency_key]
+              properties:
+                customer_msisdn: {type: string, example: "+251912345678"}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Cash-out completed
+
+  /agent/sync:
+    servers:
+      - url: http://localhost:8005
+        description: Agent :8005
+    post:
+      tags: [Agent]
+      summary: Batch sync offline operations
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operations]
+              properties:
+                operations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type: {type: string}
+                      payload: {type: object}
+                      idempotency_key: {type: string}
+      responses:
+        "200":
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied: {type: integer}
+                  rejected: {type: integer}
+                  state: {type: string}
+
+  # ── Branch ────────────────────────────────────────────────────────────────────
+
+  /branch/kyc/queue:
+    servers:
+      - url: http://localhost:8008
+        description: Branch :8008
+    get:
+      tags: [Branch]
+      summary: Get pending KYC review queue (branch officer)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: KYC queue list
+
+  /branch/kyc/{user_id}/review:
+    servers:
+      - url: http://localhost:8008
+        description: Branch :8008
+    post:
+      tags: [Branch]
+      summary: Submit KYC review decision
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, target_tier]
+              properties:
+                decision: {type: string, enum: [APPROVE, REJECT]}
+                target_tier: {type: integer, enum: [1, 2]}
+                note: {type: string}
+      responses:
+        "200":
+          description: Review recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  decision: {type: string}
+                  reviewed_at: {type: string, format: date-time}
+                  target_tier: {type: integer}
+
+  /branch/settlements:
+    servers:
+      - url: http://localhost:8008
+        description: Branch :8008
+    get:
+      tags: [Branch]
+      summary: List agent settlements for this branch
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Settlement list
+    post:
+      tags: [Branch]
+      summary: Settle agent float (4-eyes authorisation)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, amount_minor, idempotency_key]
+              properties:
+                agent_id: {type: string, format: uuid}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Settlement created
+
+  /branch/disputes:
+    servers:
+      - url: http://localhost:8008
+        description: Branch :8008
+    get:
+      tags: [Branch]
+      summary: List open transaction disputes
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dispute list
+
+  /branch/disputes/{id}/resolve:
+    servers:
+      - url: http://localhost:8008
+        description: Branch :8008
+    post:
+      tags: [Branch]
+      summary: Resolve transaction dispute (4-eyes authorisation)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolution]
+              properties:
+                resolution: {type: string, enum: [REVERSE, UPHOLD]}
+                note: {type: string}
+      responses:
+        "200":
+          description: Dispute resolved
+
+  /branch/reconciliation:
+    servers:
+      - url: http://localhost:8008
+        description: Branch :8008
+    get:
+      tags: [Branch]
+      summary: End-of-day cash reconciliation report
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: date
+          schema: {type: string, format: date}
+      responses:
+        "200":
+          description: Reconciliation report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date: {type: string}
+                  ledger_minor: {type: integer, format: int64}
+                  counted_minor: {type: integer, format: int64}
+
+  /branch/agents/{id}/approve:
+    servers:
+      - url: http://localhost:8008
+        description: Branch :8008
+    post:
+      tags: [Branch]
+      summary: Approve agent onboarding (scoped to officer's region)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [float_ceiling_minor]
+              properties:
+                float_ceiling_minor: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Agent approved
+
+  # ── Admin ─────────────────────────────────────────────────────────────────────
+
+  /admin/dashboard/summary:
+    servers:
+      - url: http://localhost:8009
+        description: Admin :8009
+    get:
+      tags: [Admin]
+      summary: OLAP dashboard KPIs
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  float_health: {type: number}
+                  loans_active: {type: integer}
+                  open_alerts: {type: integer}
+
+  /admin/dashboard/volume:
+    servers:
+      - url: http://localhost:8009
+        description: Admin :8009
+    get:
+      tags: [Admin]
+      summary: Transaction volume time-series
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: period
+          schema: {type: string, enum: [7d, 30d, 90d], default: 30d}
+      responses:
+        "200":
+          description: Volume series list
+
+  /admin/flags:
+    servers:
+      - url: http://localhost:8009
+        description: Admin :8009
+    get:
+      tags: [Admin]
+      summary: List all feature flags
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Feature flag list
+
+  /admin/flags/{flag}:
+    servers:
+      - url: http://localhost:8009
+        description: Admin :8009
+    patch:
+      tags: [Admin]
+      summary: Toggle feature flag (e.g. iqub_enabled)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: flag
+          required: true
+          schema: {type: string, example: iqub_enabled}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: {type: boolean}
+                rollout_pct: {type: integer, minimum: 0, maximum: 100}
+      responses:
+        "200":
+          description: Flag updated
+
+  /admin/fraud/alerts:
+    servers:
+      - url: http://localhost:8009
+        description: Admin :8009
+    get:
+      tags: [Admin]
+      summary: List fraud alerts
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema: {type: string, enum: [OPEN, CLOSED, ALL], default: OPEN}
+      responses:
+        "200":
+          description: Fraud alert list
+
+  /admin/audit:
+    servers:
+      - url: http://localhost:8009
+        description: Admin :8009
+    get:
+      tags: [Admin]
+      summary: Paginated audit log
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: actor_id
+          schema: {type: string, format: uuid}
+        - in: query
+          name: cursor
+          schema: {type: string}
+        - in: query
+          name: limit
+          schema: {type: integer, default: 50}
+      responses:
+        "200":
+          description: Audit log entries
+
+  /admin/config/{key}:
+    servers:
+      - url: http://localhost:8009
+        description: Admin :8009
+    put:
+      tags: [Admin]
+      summary: Update config value (4-eyes, e.g. kyc.limit)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: key
+          required: true
+          schema: {type: string, example: "kyc.limit"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: {type: object}
+                reason: {type: string}
+      responses:
+        "200":
+          description: Config updated
+
+  /admin/live:
+    servers:
+      - url: http://localhost:8009
+        description: Admin :8009
+    get:
+      tags: [Admin]
+      summary: WebSocket live event stream (requires Upgrade header)
+      description: |
+        Upgrade this connection to WebSocket: `ws://localhost:8009/admin/live`
+        Swagger UI cannot test WebSocket upgrades — use `wscat` or the web console.
+      responses:
+        "101":
+          description: Switching Protocols (WebSocket)
+
+  # ── USSD ──────────────────────────────────────────────────────────────────────
+
+  /ussd/menus:
+    servers:
+      - url: http://localhost:8010
+        description: USSD :8010
+    get:
+      tags: [USSD]
+      summary: Get USSD menu tree definitions
+      responses:
+        "200":
+          description: Menu definitions
+
+  /ussd/callback:
+    servers:
+      - url: http://localhost:8010
+        description: USSD :8010
+    post:
+      tags: [USSD]
+      summary: USSD gateway callback (telecom → Mesob)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, msisdn, input, service_code]
+              properties:
+                session_id: {type: string}
+                msisdn: {type: string}
+                input: {type: string}
+                service_code: {type: string}
+      responses:
+        "200":
+          description: USSD response text
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  continue: {type: boolean}
+
+  # ── Telegram ──────────────────────────────────────────────────────────────────
+
+  /telegram/webhook:
+    servers:
+      - url: http://localhost:8011
+        description: Telegram :8011
+    post:
+      tags: [Telegram]
+      summary: Telegram Bot API webhook callback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Telegram Update object (as-is from Telegram)
+      responses:
+        "200":
+          description: Update handled
+
+  # ── Notification ──────────────────────────────────────────────────────────────
+
+  /notify/send:
+    servers:
+      - url: http://localhost:8012
+        description: Notification :8012
+    post:
+      tags: [Notification]
+      summary: Send a notification (internal — called by other services)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, template]
+              properties:
+                user_id: {type: string, format: uuid}
+                template: {type: string, example: otp}
+                params: {type: object}
+                channel_hint: {type: string, enum: [SMS, PUSH, TELEGRAM]}
+      responses:
+        "202":
+          description: Queued for delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivery_id: {type: string}
+                  status: {type: string}
+
+  /notify/deliveries/{id}:
+    servers:
+      - url: http://localhost:8012
+        description: Notification :8012
+    get:
+      tags: [Notification]
+      summary: Get notification delivery status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Delivery record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivery_id: {type: string}
+                  status: {type: string}
+
+  /notify/templates/{key}:
+    servers:
+      - url: http://localhost:8012
+        description: Notification :8012
+    put:
+      tags: [Notification]
+      summary: Upsert notification template (SUPER_ADMIN)
+      parameters:
+        - in: path
+          name: key
+          required: true
+          schema: {type: string, example: otp}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lang, channel, body]
+              properties:
+                lang: {type: string, enum: [am, om, ti, en]}
+                channel: {type: string, enum: [SMS, PUSH, TELEGRAM]}
+                body: {type: string}
+      responses:
+        "200":
+          description: Template upserted
+
+  # ── Adapter Hub ───────────────────────────────────────────────────────────────
+
+  /adapters/status:
+    servers:
+      - url: http://localhost:8013
+        description: Adapter Hub :8013
+    get:
+      tags: [Adapter Hub]
+      summary: List all adapter health statuses (SUPER_ADMIN)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Adapter status list
+
+  /adapters/nid/verify:
+    servers:
+      - url: http://localhost:8013
+        description: Adapter Hub :8013
+    post:
+      tags: [Adapter Hub]
+      summary: Verify National ID against Fayda registry (INTERNAL — mTLS)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fan, claim]
+              properties:
+                fan: {type: string}
+                claim:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    dob: {type: string, format: date}
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified: {type: boolean}
+                  match_score: {type: number}
+                  mode: {type: string, enum: [LIVE, DEMO]}
+
+  /adapters/mfi/originate:
+    servers:
+      - url: http://localhost:8013
+        description: Adapter Hub :8013
+    post:
+      tags: [Adapter Hub]
+      summary: Originate MFI loan facility (INTERNAL — mTLS)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_ref, principal_minor, term_days, score_ref]
+              properties:
+                user_ref: {type: string}
+                principal_minor: {type: integer, format: int64}
+                term_days: {type: integer}
+                score_ref: {type: string}
+      responses:
+        "201":
+          description: Facility originated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  facility_id: {type: string}
+                  status: {type: string}
+                  mode: {type: string, enum: [LIVE, DEMO]}
+
+  /adapters/webhooks/{partner}:
+    servers:
+      - url: http://localhost:8013
+        description: Adapter Hub :8013
+    post:
+      tags: [Adapter Hub]
+      summary: Partner webhook receiver (signed by partner — e.g. awash)
+      parameters:
+        - in: path
+          name: partner
+          required: true
+          schema: {type: string, example: awash}
+      responses:
+        "200":
+          description: Webhook received
+
+  # ── Database Schema ───────────────────────────────────────────────────────────
+
+  /docs/db-schema:
+    get:
+      tags: [Database Schema]
+      summary: PostgreSQL table catalogue — documentation only, not a real endpoint
+      description: |
+        **This operation is documentation-only.** No service exposes this path.
+
+        PostgreSQL 16 runs on `localhost:5433` (Docker maps container `5432 → host 5433`).
+        Monetary amounts are stored as `BIGINT` in **minor units** — 1 ETB = 100 minor units.
+        Every service database has an `outbox_events` table for transactional outbox → Kafka.
+
+        ---
+
+        ## mesob_identity
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `regions` | `id UUID` | `name VARCHAR(128)`, `code VARCHAR(8)` UNIQUE |
+        | `users` | `id UUID` | `msisdn VARCHAR(20)`, `fan_hash BYTEA` UNIQUE, `kyc_tier SMALLINT` (0/1/2), `status` (PENDING/ACTIVE), `preferred_lang`, `deleted_at` |
+        | `credentials` | `user_id UUID → users` | `pin_hash BYTEA`, `failed_count SMALLINT`, `locked_until TIMESTAMPTZ` |
+        | `kyc_limits` | `tier SMALLINT` | `per_txn_minor BIGINT`, `daily_minor BIGINT`, `balance_minor BIGINT` — tier 0: 5/2/5 ETB hundreds, tier 2: 50k/200k/500k ETB |
+        | `kyc_limits_history` | `id UUID` | Audit trail for limit changes (`changed_by`, `change_reason`) |
+        | `outbox_events` | `id UUID` | `aggregate`, `event_type`, `payload_json JSONB`, `published BOOLEAN` |
+
+        ---
+
+        ## mesob_ledger
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `accounts` | `id UUID` | `owner_type VARCHAR(16)`, `owner_id UUID`, `type` (WALLET/FLOAT/POOL/FEE), `currency CHAR(3)`, `allow_negative BOOLEAN` |
+        | `account_balances` | `account_id UUID → accounts` | `balance_minor BIGINT` — materialised, updated by trigger |
+        | `transactions` | `(id, created_at)` partitioned monthly | `type VARCHAR(24)`, `idempotency_key VARCHAR(64)` UNIQUE/month, `reverses_txn_id UUID` |
+        | `ledger_entries` | `(id, created_at)` partitioned monthly | `direction CHAR(1)` D/C, `amount_minor BIGINT CHECK > 0` — **balanced by `CONSTRAINT TRIGGER trg_assert_balanced`** |
+        | `idempotency_keys` | `key VARCHAR(64)` | `transaction_id UUID`, `expires_at TIMESTAMPTZ` (24 h TTL) |
+        | `outbox_events` | `id UUID` | — |
+
+        ---
+
+        ## mesob_iqub
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `iqub_groups` | `id UUID` | `cycle_minor BIGINT`, `frequency`, `member_limit SMALLINT`, `payout_order` (RANDOM/SEQUENTIAL), `status` (FORMING/ACTIVE/CLOSED), `join_code VARCHAR(16)` |
+        | `iqub_memberships` | `id UUID` | `group_id`, `user_id`, `payout_order SMALLINT`, `cycle_state` — UNIQUE(`group_id, user_id`) |
+        | `iqub_cycles` | `id UUID` | `group_id`, `number SMALLINT`, `status` (OPEN/CLOSED), `recipient_id UUID`, `due_date DATE` |
+        | `outbox_events` | `id UUID` | — |
+
+        ---
+
+        ## mesob_iddir
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `iddir_groups` | `id UUID` | `premium_minor BIGINT`, `benefit_minor BIGINT`, `frequency`, `pool_account_id UUID` |
+        | `iddir_memberships` | `id UUID` | `group_id`, `user_id`, `coverage_status` — UNIQUE(`group_id, user_id`) |
+        | `iddir_premiums` | `id UUID` | `membership_id`, `period VARCHAR(8)` (YYYY-MM), `transaction_id UUID` |
+        | `iddir_claims` | `id UUID` | `type` (DEATH/DISABILITY/HOSPITALIZATION), `status` (UNDER_REVIEW/APPROVED/REJECTED), `settled_minor BIGINT`, `evidence_ref` |
+        | `outbox_events` | `id UUID` | — |
+
+        ---
+
+        ## mesob_agent
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `agents` | `id UUID` | `user_id UUID` UNIQUE, `float_account_id UUID`, `float_limit_minor BIGINT`, `region_id UUID`, `status` (PENDING/ACTIVE/SUSPENDED) |
+        | `settlements` | `id UUID` | `agent_id`, `amount_minor`, `authorised_by UUID`, `second_authoriser UUID` (4-eyes), `confirmed_at` |
+        | `outbox_events` | `id UUID` | — |
+
+        ---
+
+        ## mesob_loans
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `credit_scores` | `id UUID` | `user_id`, `score SMALLINT`, `tier CHAR(1)`, `ceiling_minor BIGINT`, `model_ver VARCHAR(64)`, `shap_json JSONB`, `inputs_hash BYTEA` |
+        | `loans` | `id UUID` | `principal_minor BIGINT`, `outstanding_minor BIGINT`, `status` (ACTIVE/REPAID/DEFAULTED), `mode` (INTERNAL/MFI), `due_date DATE`, `mfi_facility_id VARCHAR(128)` |
+        | `repayments` | `id UUID` | `loan_id`, `amount_minor`, `transaction_id UUID` |
+        | `decisions` | `id UUID` | `decision` (APPROVE/REJECT), `reasons JSONB`, `ceiling_minor BIGINT` |
+        | `outbox_events` | `id UUID` | — |
+
+        ---
+
+        ## mesob_payments
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `merchants` | `id UUID` | `name VARCHAR(128)`, `account_id UUID`, `commission_pct NUMERIC(5,2)`, `status` |
+        | `billers` | `id UUID` | `name`, `adapter_key VARCHAR(64)` UNIQUE, `status` |
+        | `payment_refs` | `id UUID` | `type` (P2P/MERCHANT/BILL), `transaction_id UUID`, `biller_ref VARCHAR(128)`, `status` |
+        | `outbox_events` | `id UUID` | — |
+
+        ---
+
+        ## mesob_branch
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `branches` | `id UUID` | `name`, `region_id UUID`, `officer_id UUID` |
+        | `approvals` | `id UUID` | `agent_id UUID`, `branch_id UUID`, `float_ceiling_minor BIGINT`, `approved_by UUID` |
+        | `disputes` | `id UUID` | `transaction_id UUID`, `raised_by UUID`, `resolution` (REVERSE/UPHOLD), `reversal_txn_id UUID`, `second_authoriser UUID` |
+        | `outbox_events` | `id UUID` | — |
+
+        ---
+
+        ## mesob_admin
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `feature_flags` | `id UUID` | `name VARCHAR(64)` UNIQUE, `enabled BOOLEAN`, `rollout_pct SMALLINT` (0–100), `updated_by UUID` |
+        | `config_items` | `key VARCHAR(128)` | `value JSONB`, `version INT`, `updated_by UUID` |
+        | `config_history` | `id UUID` | Audit trail for config changes (`valid_from`, `valid_to`, `changed_by`, `reason`) |
+        | `audit_log` | `(id, created_at)` partitioned monthly | `actor_id UUID`, `actor_role VARCHAR(32)`, `action VARCHAR(64)`, `target VARCHAR(128)`, `ip INET` |
+
+        ---
+
+        ## mesob_notification
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `templates` | `id UUID` | `key`, `lang`, `channel` — UNIQUE(`key, lang, channel`). Pre-seeded: OTP + txn templates in 4 languages (am/en/om/ti). |
+        | `delivery_log` | `id UUID` | `user_id UUID`, `template_key`, `channel`, `status` (QUEUED/DELIVERED/FAILED), `attempts SMALLINT`, `last_error TEXT` |
+
+        ---
+
+        ## mesob_scoring  *(Python AI service — :9001)*
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `credit_scores` | `id UUID` | `user_id`, `score SMALLINT`, `tier CHAR(1)`, `ceiling_minor BIGINT`, `model_ver VARCHAR(64)`, `shap_json JSONB`, `inputs_hash BYTEA` |
+
+        ---
+
+        ## mesob_fraud  *(Python AI service — :9002)*
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `fraud_alerts` | `id UUID` | `user_id UUID`, `transaction_id UUID`, `rule VARCHAR(64)`, `severity` (HIGH/MEDIUM/LOW), `risk_score NUMERIC(5,2)`, `status` (OPEN/CLOSED), `disposition`, `disposed_by UUID` |
+
+        ---
+
+        ## mesob_adapters
+
+        | Table | PK | Key Columns |
+        |-------|-----|-------------|
+        | `adapter_requests` | `id UUID` | `adapter VARCHAR(32)`, `idempotency_key VARCHAR(64)` UNIQUE per adapter, `request_json JSONB`, `response_json JSONB`, `status` |
+
+      responses:
+        "200":
+          description: Documentation-only — not a real endpoint

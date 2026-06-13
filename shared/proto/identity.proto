@@ -1,0 +1,45 @@
+syntax = "proto3";
+package identity;
+option go_package = "github.com/mesob-wallet/identity/internal/transport/grpc/pb;pb";
+
+// Internal gRPC contract used by Gateway and other services to resolve
+// user identity without hitting the REST layer.
+service IdentityService {
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  rpc GetKYCLimits(GetKYCLimitsRequest) returns (GetKYCLimitsResponse);
+  rpc VerifyPIN(VerifyPINRequest) returns (VerifyPINResponse);
+}
+
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message GetUserResponse {
+  string user_id       = 1;
+  string msisdn        = 2;
+  int32  kyc_tier      = 3;
+  string region_id     = 4;
+  string status        = 5;
+  string preferred_lang = 6;
+}
+
+message GetKYCLimitsRequest {
+  int32 tier = 1;
+}
+
+message GetKYCLimitsResponse {
+  int32 tier             = 1;
+  int64 per_txn_minor    = 2;
+  int64 daily_minor      = 3;
+  int64 balance_minor    = 4;
+}
+
+message VerifyPINRequest {
+  string user_id = 1;
+  string pin     = 2;
+}
+
+message VerifyPINResponse {
+  bool verified = 1;
+  bool locked   = 2;
+}

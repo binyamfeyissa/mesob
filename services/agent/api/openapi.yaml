@@ -1,0 +1,111 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Agent Service
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8005
+    description: Agent Service
+paths:
+  /agent/float:
+    get:
+      summary: Get agent float balance
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Float balance
+  /agent/onboard:
+    post:
+      summary: Submit agent onboarding request
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [region_id, fan]
+              properties:
+                region_id: {type: string, format: uuid}
+                fan: {type: string, description: Fayda Account Number}
+                business_name: {type: string}
+      responses:
+        "202":
+          description: Onboarding submitted
+  /agent/cash-in:
+    post:
+      summary: Agent disburses cash to user wallet
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_msisdn, amount_minor, idempotency_key]
+              properties:
+                customer_msisdn: {type: string, example: "+251912345678"}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Cash-in completed
+  /agent/cash-out:
+    post:
+      summary: Agent collects cash from user wallet
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_msisdn, amount_minor, idempotency_key]
+              properties:
+                customer_msisdn: {type: string, example: "+251912345678"}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Cash-out completed
+  /agent/sync:
+    post:
+      summary: Batch sync offline operations
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operations]
+              properties:
+                operations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type: {type: string}
+                      payload: {type: object}
+                      idempotency_key: {type: string}
+      responses:
+        "200":
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied: {type: integer}
+                  rejected: {type: integer}
+                  state: {type: string}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,34 @@
+# Go
+*.exe
+*.test
+*.out
+vendor/
+.env
+
+# Node
+node_modules/
+.next/
+dist/
+.turbo/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Secrets
+*.pem
+*.key
+*.crt
+infra/certs/
+
+# Build artifacts
+bin/
+build/

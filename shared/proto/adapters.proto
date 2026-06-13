@@ -1,0 +1,38 @@
+syntax = "proto3";
+package adapters;
+option go_package = "github.com/mesob-wallet/adapter-hub/internal/transport/grpc/pb;pb";
+
+service AdapterService {
+  rpc VerifyNID(VerifyNIDRequest) returns (VerifyNIDResponse);
+  rpc OriginateMFI(OriginateRequest) returns (OriginateResponse);
+}
+
+message FANClaim {
+  string name = 1;
+  string dob  = 2;
+}
+
+message VerifyNIDRequest {
+  string   fan   = 1;
+  FANClaim claim = 2;
+}
+
+message VerifyNIDResponse {
+  bool   verified    = 1;
+  float  match_score = 2;
+  string mode        = 3;
+}
+
+message OriginateRequest {
+  string user_ref       = 1;
+  int64  principal_minor = 2;
+  int32  term_days      = 3;
+  string score_ref      = 4;
+  string idempotency_key = 5;
+}
+
+message OriginateResponse {
+  string facility_id = 1;
+  string status      = 2;
+  string mode        = 3;
+}

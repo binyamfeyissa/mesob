@@ -1,0 +1,22 @@
+go 1.24
+
+use (
+	./shared/go-kit
+	./shared/events
+	./services/gateway
+	./services/identity
+	./services/ledger
+	./services/iqub
+	./services/iddir
+	./services/agent
+	./services/loans
+	./services/payments
+	./services/branch
+	./services/admin
+	./services/ussd
+	./services/telegram
+	./services/notification
+	./services/adapter-hub
+	./infra/scripts/seed_demo
+)
+

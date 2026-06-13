@@ -1,0 +1,21 @@
+syntax = "proto3";
+package fraud;
+option go_package = "github.com/mesob-wallet/fraud/internal/transport/grpc/pb;pb";
+
+service FraudService {
+  rpc Screen(ScreenRequest) returns (ScreenResponse);
+}
+
+message ScreenRequest {
+  string user_id       = 1;
+  string type          = 2;
+  int64  amount_minor  = 3;
+  string counterparty  = 4;
+  string channel       = 5;
+}
+
+message ScreenResponse {
+  string   decision   = 1; // ALLOW | REVIEW | BLOCK
+  float    risk_score = 2;
+  repeated string rules_hit = 3;
+}

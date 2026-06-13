@@ -1,0 +1,153 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Branch Service
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8008
+    description: Branch Service
+paths:
+  /branch/kyc/queue:
+    get:
+      summary: Get pending KYC review queue
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: KYC queue list
+  /branch/kyc/{user_id}/review:
+    post:
+      summary: Submit KYC review decision
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, target_tier]
+              properties:
+                decision: {type: string, enum: [APPROVE, REJECT]}
+                target_tier: {type: integer, enum: [1, 2]}
+                note: {type: string}
+      responses:
+        "200":
+          description: Review recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  decision: {type: string}
+                  reviewed_at: {type: string, format: date-time}
+                  target_tier: {type: integer}
+  /branch/settlements:
+    get:
+      summary: List agent settlements
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Settlement list
+    post:
+      summary: Settle agent float (4-eyes)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, amount_minor, idempotency_key]
+              properties:
+                agent_id: {type: string, format: uuid}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Settlement created
+  /branch/disputes:
+    get:
+      summary: List open disputes
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dispute list
+  /branch/disputes/{id}/resolve:
+    post:
+      summary: Resolve transaction dispute (4-eyes)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolution]
+              properties:
+                resolution: {type: string, enum: [REVERSE, UPHOLD]}
+                note: {type: string}
+      responses:
+        "200":
+          description: Dispute resolved
+  /branch/reconciliation:
+    get:
+      summary: End-of-day cash reconciliation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: date
+          schema: {type: string, format: date}
+      responses:
+        "200":
+          description: Reconciliation report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date: {type: string}
+                  ledger_minor: {type: integer, format: int64}
+                  counted_minor: {type: integer, format: int64}
+  /branch/agents/{id}/approve:
+    post:
+      summary: Approve agent (scoped to own region)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [float_ceiling_minor]
+              properties:
+                float_ceiling_minor: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Agent approved
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

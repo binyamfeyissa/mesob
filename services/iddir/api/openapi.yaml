@@ -1,0 +1,96 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Iddir Service
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8004
+    description: Iddir Service
+paths:
+  /iddir/groups:
+    post:
+      summary: Create mutual insurance group
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, premium_minor, frequency, benefit_minor]
+              properties:
+                name: {type: string}
+                premium_minor: {type: integer, format: int64}
+                frequency: {type: string, enum: [MONTHLY, QUARTERLY]}
+                benefit_minor: {type: integer, format: int64}
+      responses:
+        "201":
+          description: Group created
+  /iddir/groups/{id}/premium:
+    post:
+      summary: Pay mutual insurance premium
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period, idempotency_key]
+              properties:
+                period: {type: string, example: "2026-06", description: "YYYY-MM"}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Premium recorded
+  /iddir/groups/{id}/claims:
+    post:
+      summary: File an insurance claim
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, description]
+              properties:
+                type: {type: string, enum: [DEATH, DISABILITY, HOSPITALIZATION]}
+                description: {type: string}
+                evidence_ref: {type: string}
+      responses:
+        "201":
+          description: Claim submitted
+  /iddir/groups/{id}/claims/{cid}:
+    get:
+      summary: Get claim status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: cid
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Claim details
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

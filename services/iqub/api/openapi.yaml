@@ -1,0 +1,113 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Iqub Service
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8003
+    description: Iqub Service
+paths:
+  /iqub/groups:
+    get:
+      summary: List user's groups
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Group list
+    post:
+      summary: Create rotating savings group
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, cycle_minor, frequency, member_limit]
+              properties:
+                name: {type: string}
+                cycle_minor: {type: integer, format: int64}
+                frequency: {type: string, enum: [WEEKLY, BIWEEKLY, MONTHLY]}
+                member_limit: {type: integer, default: 20}
+                payout_order: {type: string, enum: [RANDOM, SEQUENTIAL], default: RANDOM}
+      responses:
+        "201":
+          description: Group created
+  /iqub/groups/{id}:
+    get:
+      summary: Get group details
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Group details
+  /iqub/groups/{id}/members:
+    post:
+      summary: Add member to group
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: {type: string, format: uuid}
+      responses:
+        "201":
+          description: Member added
+  /iqub/groups/{id}/contribute:
+    post:
+      summary: Make cycle contribution
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cycle_id, idempotency_key]
+              properties:
+                cycle_id: {type: string, format: uuid}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Contribution recorded
+  /iqub/cycles/{id}/close:
+    post:
+      summary: Close a savings cycle and disburse payout
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Cycle closed
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,24 @@
+// go.work.dev — used inside Docker dev containers instead of go.work.
+// Identical to go.work but excludes ./infra/scripts/seed_demo, which is a
+// standalone CLI that isn't needed inside service containers and would require
+// mounting an extra directory just to satisfy the workspace resolver.
+go 1.24
+
+use (
+	./shared/go-kit
+	./shared/events
+	./services/gateway
+	./services/identity
+	./services/ledger
+	./services/iqub
+	./services/iddir
+	./services/agent
+	./services/loans
+	./services/payments
+	./services/branch
+	./services/admin
+	./services/ussd
+	./services/telegram
+	./services/notification
+	./services/adapter-hub
+)

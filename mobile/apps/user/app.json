@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Mesob Wallet",
+    "slug": "mesob-user",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "mesob-user",
+    "android": {
+      "package": "com.mesobwallet.user"
+    },
+    "ios": {
+      "bundleIdentifier": "com.mesobwallet.user",
+      "supportsTablet": false
+    },
+    "plugins": [
+      ["expo-router", { "root": "app" }],
+      "expo-secure-store"
+    ],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

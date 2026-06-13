@@ -1,0 +1,14 @@
+{
+  "extends": ["@commitlint/config-conventional"],
+  "rules": {
+    "scope-enum": [2, "always", [
+      "gateway", "identity", "ledger", "iqub", "iddir",
+      "agent", "loans", "payments", "branch", "admin",
+      "ussd", "telegram", "notification", "adapter-hub",
+      "scoring", "fraud", "web", "mobile", "infra", "shared", "docs"
+    ]],
+    "type-enum": [2, "always", [
+      "feat", "fix", "refactor", "chore", "docs", "test", "perf", "build"
+    ]]
+  }
+}

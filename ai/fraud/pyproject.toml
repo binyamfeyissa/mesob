@@ -1,0 +1,19 @@
+[project]
+name = "mesob-fraud"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.112.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.8.0",
+    "scikit-learn>=1.5.0",
+    "kafka-python>=2.0.2",
+    "redis>=5.0.0",
+    "psycopg2-binary>=2.9.9",
+    "python-dotenv>=1.0.0",
+    "numpy>=1.26.0",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends.legacy:build"

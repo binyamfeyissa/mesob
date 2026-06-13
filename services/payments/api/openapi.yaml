@@ -1,0 +1,92 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Payments Service
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8007
+    description: Payments Service
+paths:
+  /payments/merchants/{id}:
+    get:
+      summary: Get merchant details
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Merchant details
+  /payments/p2p:
+    post:
+      summary: Person-to-person transfer (fail-closed fraud screen)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_msisdn, amount_minor, idempotency_key]
+              properties:
+                to_msisdn: {type: string, example: "+251987654321"}
+                amount_minor: {type: integer, format: int64}
+                note: {type: string}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Transfer initiated
+  /payments/merchant:
+    post:
+      summary: Pay merchant with commission split
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchant_id, amount_minor, idempotency_key]
+              properties:
+                merchant_id: {type: string, format: uuid}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "201":
+          description: Payment processed
+  /payments/bill:
+    post:
+      summary: Pay utility bill via adapter
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [biller_id, reference, amount_minor, idempotency_key]
+              properties:
+                biller_id: {type: string, format: uuid}
+                reference: {type: string}
+                amount_minor: {type: integer, format: int64}
+                idempotency_key: {type: string}
+      responses:
+        "202":
+          description: Bill payment queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  biller_ref: {type: string}
+                  status: {type: string}
+                  transaction_id: {type: string}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

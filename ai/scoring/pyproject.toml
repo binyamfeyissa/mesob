@@ -1,0 +1,20 @@
+[project]
+name = "mesob-scoring"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.112.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.8.0",
+    "xgboost>=2.1.0",
+    "shap>=0.45.0",
+    "kafka-python>=2.0.2",
+    "redis>=5.0.0",
+    "psycopg2-binary>=2.9.9",
+    "python-dotenv>=1.0.0",
+    "numpy>=1.26.0",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends.legacy:build"

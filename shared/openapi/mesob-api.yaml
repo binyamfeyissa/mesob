@@ -1,0 +1,1641 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Wallet API
+  version: "1.0.0"
+  description: |
+    Unified public API for the Mesob Wallet platform.
+    All requests go through the API Gateway at port 8000.
+
+    ## Authentication
+    - Mobile/USSD users authenticate with **MSISDN + PIN** via `/v1/identity/login`
+    - Access tokens are RS256 JWTs valid for **15 minutes**
+    - Refresh tokens are 7-day opaque tokens returned as an `httpOnly` cookie
+    - Staff users (ADMIN, BRANCH_MANAGER, SUPER_ADMIN) use the same auth flow
+
+    ## Demo Accounts
+    | Role | MSISDN | PIN |
+    |------|--------|-----|
+    | SUPER_ADMIN | +251911000001 | 111111 |
+    | ADMIN | +251911000002 | 111111 |
+    | BRANCH_MANAGER | +251911000003 | 111111 |
+    | AGENT | +251911000004 | 111111 |
+    | USER (KYC Tier 2) | +251911000005 | 111111 |
+    | USER (KYC Tier 0) | +251911000006 | 111111 |
+
+    ## Amounts
+    All monetary values are in **ETB minor units (cents)**.
+    Example: 100.00 ETB = `10000`
+
+    ## Response Envelope
+    All responses follow:
+    ```json
+    {
+      "data": { ... },
+      "meta": { "request_id": "...", "trace_id": "..." }
+    }
+    ```
+    Errors:
+    ```json
+    {
+      "error": { "code": "DOMAIN_ERROR_CODE", "message": "human message" },
+      "meta": { ... }
+    }
+    ```
+  contact:
+    name: Mesob Engineering
+    email: engineering@mesobwallet.et
+
+servers:
+  - url: http://localhost:8000/v1
+    description: Local development
+  - url: https://api.mesobwallet.et/v1
+    description: Production
+
+tags:
+  - name: Auth
+    description: Registration, login, token management
+  - name: Identity
+    description: User profile, KYC, settings
+  - name: Payments
+    description: P2P transfers, merchant payments, bill payments
+  - name: Iqub
+    description: Rotating savings circles (traditional Ethiopian iqub)
+  - name: Iddir
+    description: Mutual insurance pools (traditional Ethiopian iddir)
+  - name: Loans
+    description: Micro-loan eligibility, application, repayment
+  - name: Agent
+    description: Agent cash-in/cash-out operations
+  - name: Branch
+    description: Branch manager operations (KYC review, settlements, disputes)
+  - name: Admin
+    description: Super-admin and admin operations (dashboard, audit, config)
+  - name: Fraud
+    description: Fraud alert management (ADMIN/SUPER_ADMIN only)
+  - name: USSD
+    description: USSD gateway callback (machine-to-machine)
+
+# ---------------------------------------------------------------------------
+# PATHS
+# ---------------------------------------------------------------------------
+paths:
+
+  # ── AUTH ──────────────────────────────────────────────────────────────────
+
+  /identity/register:
+    post:
+      tags: [Auth]
+      summary: Start registration — send OTP to phone
+      operationId: registerStart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [msisdn]
+              properties:
+                msisdn:
+                  type: string
+                  description: E.164 phone number
+                  example: "+251912345678"
+                region_id:
+                  type: string
+                  format: uuid
+                  description: User's region (optional, defaults to Addis)
+                lang:
+                  type: string
+                  enum: [am, om, ti, en]
+                  default: am
+                  description: Preferred language (Amharic, Oromo, Tigrinya, English)
+            example:
+              msisdn: "+251912345678"
+              lang: "am"
+      responses:
+        "202":
+          description: OTP sent to the provided phone number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  registration_id: "reg_01J3ABCDEF"
+                  expires_in: 300
+                meta:
+                  request_id: "req_abc123"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /identity/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Verify OTP — get challenge token for PIN setup
+      operationId: verifyOTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [registration_id, otp]
+              properties:
+                registration_id:
+                  type: string
+                  example: "reg_01J3ABCDEF"
+                otp:
+                  type: string
+                  minLength: 6
+                  maxLength: 6
+                  example: "482910"
+      responses:
+        "200":
+          description: OTP verified — challenge token issued for PIN creation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  challenge_token: "chall_01J3XYZPQR"
+                  expires_in: 600
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /identity/set-pin:
+    post:
+      tags: [Auth]
+      summary: Set PIN — complete registration, create account & issue tokens
+      operationId: setPin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_token, pin]
+              properties:
+                challenge_token:
+                  type: string
+                  example: "chall_01J3XYZPQR"
+                pin:
+                  type: string
+                  minLength: 4
+                  maxLength: 6
+                  description: Numeric PIN (stored as Argon2id hash)
+                  example: "111111"
+      responses:
+        "201":
+          description: Account created, session issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  access_token: "eyJhbGciOiJSUzI1NiJ9..."
+                  expires_in: 900
+                  role: "USER"
+                  kyc_tier: 0
+                  user_id: "01924b6f-1234-7abc-8def-000000000005"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /identity/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate with MSISDN + PIN
+      operationId: login
+      description: |
+        On success, sets an `httpOnly` `rt` cookie with the 7-day refresh token.
+        The `access_token` in the response body should be stored in-memory only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [msisdn, pin]
+              properties:
+                msisdn:
+                  type: string
+                  example: "+251911000005"
+                pin:
+                  type: string
+                  minLength: 4
+                  maxLength: 6
+                  example: "111111"
+            examples:
+              user:
+                summary: Demo USER login
+                value: { msisdn: "+251911000005", pin: "111111" }
+              admin:
+                summary: Demo ADMIN login
+                value: { msisdn: "+251911000002", pin: "111111" }
+              superAdmin:
+                summary: Demo SUPER_ADMIN login
+                value: { msisdn: "+251911000001", pin: "111111" }
+              branchManager:
+                summary: Demo BRANCH_MANAGER login
+                value: { msisdn: "+251911000003", pin: "111111" }
+              agent:
+                summary: Demo AGENT login
+                value: { msisdn: "+251911000004", pin: "111111" }
+      responses:
+        "200":
+          description: Login successful
+          headers:
+            Set-Cookie:
+              description: "`rt=<token>; HttpOnly; SameSite=Strict; Path=/v1/identity/token`"
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  access_token: "eyJhbGciOiJSUzI1NiJ9..."
+                  expires_in: 900
+                  role: "USER"
+                  kyc_tier: 2
+                  user_id: "01924b6f-1234-7abc-8def-000000000005"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /identity/token/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate access token using refresh token cookie
+      operationId: tokenRefresh
+      description: |
+        Reads the `rt` httpOnly cookie (or `X-Refresh-Token` header for mobile).
+        Implements token-family rotation — using a revoked token invalidates the whole family.
+      parameters:
+        - in: header
+          name: X-Refresh-Token
+          schema:
+            type: string
+          description: Mobile alternative to the `rt` cookie
+      responses:
+        "200":
+          description: New tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  access_token: "eyJhbGciOiJSUzI1NiJ9..."
+                  refresh_token: "rt_new_opaque_token"
+                  expires_in: 900
+                  role: "USER"
+                  kyc_tier: 2
+                  user_id: "01924b6f-1234-7abc-8def-000000000005"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /identity/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke refresh token family and clear session
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Session revoked
+
+  # ── IDENTITY ─────────────────────────────────────────────────────────────
+
+  /identity/me:
+    get:
+      tags: [Identity]
+      summary: Get current user profile
+      operationId: getMe
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  user_id: "01924b6f-1234-7abc-8def-000000000005"
+                  msisdn: "+251912345678"
+                  kyc_tier: 2
+                  role: "USER"
+                  status: "ACTIVE"
+                  preferred_lang: "am"
+                  region_id: "01924b6f-0000-7000-8000-000000000001"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /identity/me/language:
+    patch:
+      tags: [Identity]
+      summary: Update preferred language
+      operationId: patchLanguage
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lang]
+              properties:
+                lang:
+                  type: string
+                  enum: [am, om, ti, en]
+      responses:
+        "200":
+          description: Language updated
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /identity/pin/change:
+    post:
+      tags: [Identity]
+      summary: Change PIN (requires current PIN)
+      operationId: changePin
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_pin, new_pin]
+              properties:
+                current_pin:
+                  type: string
+                  minLength: 4
+                  maxLength: 6
+                new_pin:
+                  type: string
+                  minLength: 4
+                  maxLength: 6
+      responses:
+        "200":
+          description: PIN changed, all sessions revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /identity/kyc/upgrade:
+    post:
+      tags: [Identity]
+      summary: Request KYC tier upgrade
+      operationId: kycUpgrade
+      security:
+        - bearerAuth: []
+      description: |
+        Submits KYC upgrade request. Triggers NID verification via adapter-hub.
+        - Tier 1: requires FAN (Fayda ID number) + name + DOB
+        - Tier 2: requires Tier 1 + address proof
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_tier, fan]
+              properties:
+                target_tier:
+                  type: integer
+                  enum: [1, 2]
+                fan:
+                  type: string
+                  description: Fayda Account Number (Ethiopian National ID)
+                  example: "FAN-1234567890"
+                full_name:
+                  type: string
+                  example: "Abebe Girma"
+                date_of_birth:
+                  type: string
+                  format: date
+                  example: "1990-05-15"
+      responses:
+        "202":
+          description: KYC review submitted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  # ── PAYMENTS ─────────────────────────────────────────────────────────────
+
+  /payments/p2p:
+    post:
+      tags: [Payments]
+      summary: Person-to-person transfer
+      operationId: p2pTransfer
+      security:
+        - bearerAuth: []
+      description: |
+        Fail-closed fraud screening — if fraud service unavailable, request is declined.
+        Amount limited by sender's KYC tier.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_msisdn, amount_minor, idempotency_key]
+              properties:
+                to_msisdn:
+                  type: string
+                  example: "+251912000099"
+                amount_minor:
+                  type: integer
+                  format: int64
+                  description: Amount in ETB cents
+                  example: 10000
+                note:
+                  type: string
+                  maxLength: 140
+                  example: "For coffee"
+                idempotency_key:
+                  type: string
+                  format: uuid
+                  description: UUIDv7 generated at capture time
+                  example: "01924b6f-abcd-7000-8000-000000000001"
+      responses:
+        "201":
+          description: Transfer posted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  transaction_id: "01924b6f-1111-7000-8000-000000000001"
+                  status: "COMPLETED"
+                  amount_minor: 10000
+                  fee_minor: 100
+        "402":
+          description: Insufficient balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Fraud declined or KYC limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /payments/merchant:
+    post:
+      tags: [Payments]
+      summary: Pay a merchant (with commission split)
+      operationId: merchantPayment
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchant_id, amount_minor, idempotency_key]
+              properties:
+                merchant_id:
+                  type: string
+                  format: uuid
+                  example: "01924b6f-2222-7000-8000-000000000001"
+                amount_minor:
+                  type: integer
+                  format: int64
+                  example: 5000
+                reference:
+                  type: string
+                  maxLength: 64
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Payment posted
+        "402":
+          description: Insufficient balance
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /payments/bill:
+    post:
+      tags: [Payments]
+      summary: Pay a utility bill via adapter hub
+      operationId: billPayment
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [biller_code, account_number, amount_minor, idempotency_key]
+              properties:
+                biller_code:
+                  type: string
+                  description: Biller identifier (e.g. "EEPCO", "AAWSA")
+                  example: "EEPCO"
+                account_number:
+                  type: string
+                  example: "1234567890"
+                amount_minor:
+                  type: integer
+                  format: int64
+                  example: 20000
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Bill payment posted
+        "402":
+          description: Insufficient balance
+        "503":
+          description: Biller adapter unavailable
+
+  # ── IQUB ─────────────────────────────────────────────────────────────────
+
+  /iqub/groups:
+    post:
+      tags: [Iqub]
+      summary: Create a rotating savings group
+      operationId: createIqubGroup
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IqubGroupCreate"
+      responses:
+        "201":
+          description: Group created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+    get:
+      tags: [Iqub]
+      summary: List iqub groups the caller belongs to
+      operationId: listIqubGroups
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of iqub groups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+
+  /iqub/groups/{id}:
+    get:
+      tags: [Iqub]
+      summary: Get iqub group detail
+      operationId: getIqubGroup
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Group detail
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /iqub/groups/{id}/contribute:
+    post:
+      tags: [Iqub]
+      summary: Make cycle contribution
+      operationId: contributeIqub
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idempotency_key]
+              properties:
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Contribution posted
+        "402":
+          description: Insufficient balance
+        "409":
+          description: Already contributed this cycle
+
+  # ── IDDIR ─────────────────────────────────────────────────────────────────
+
+  /iddir/groups:
+    get:
+      tags: [Iddir]
+      summary: List iddir groups the caller belongs to
+      operationId: listIddirGroups
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of iddir groups
+
+  /iddir/groups/{id}/premium:
+    post:
+      tags: [Iddir]
+      summary: Pay mutual insurance premium
+      operationId: payIddirPremium
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idempotency_key]
+              properties:
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Premium paid
+        "402":
+          description: Insufficient balance
+
+  /iddir/groups/{id}/claims:
+    post:
+      tags: [Iddir]
+      summary: File an iddir claim
+      operationId: fileIddirClaim
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event_type, description]
+              properties:
+                event_type:
+                  type: string
+                  enum: [DEATH, HOSPITALIZATION, OTHER]
+                description:
+                  type: string
+                  maxLength: 500
+                evidence_urls:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+      responses:
+        "202":
+          description: Claim submitted for review
+
+  # ── LOANS ─────────────────────────────────────────────────────────────────
+
+  /loans/eligibility:
+    get:
+      tags: [Loans]
+      summary: Check loan eligibility
+      operationId: checkLoanEligibility
+      security:
+        - bearerAuth: []
+      description: Calls scoring service — returns ML score, max principal, term options.
+      responses:
+        "200":
+          description: Eligibility result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  eligible: true
+                  max_principal_minor: 500000
+                  score: 0.82
+                  score_ref: "scr_01J3ABCDEF"
+                  term_options: [30, 60, 90]
+
+  /loans/apply:
+    post:
+      tags: [Loans]
+      summary: Apply for a micro-loan
+      operationId: applyLoan
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [principal_minor, term_days, score_ref, idempotency_key]
+              properties:
+                principal_minor:
+                  type: integer
+                  format: int64
+                  example: 200000
+                term_days:
+                  type: integer
+                  enum: [30, 60, 90]
+                score_ref:
+                  type: string
+                  description: Opaque reference from eligibility check
+                  example: "scr_01J3ABCDEF"
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "202":
+          description: Loan application submitted
+        "422":
+          description: Ineligible or score expired
+
+  /loans/{id}/repay:
+    post:
+      tags: [Loans]
+      summary: Make a loan repayment
+      operationId: repayLoan
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_minor, idempotency_key]
+              properties:
+                amount_minor:
+                  type: integer
+                  format: int64
+                  example: 50000
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Repayment posted
+        "402":
+          description: Insufficient balance
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── AGENT ─────────────────────────────────────────────────────────────────
+
+  /agent/cash-in:
+    post:
+      tags: [Agent]
+      summary: Agent disburses cash to user wallet
+      operationId: agentCashIn
+      security:
+        - bearerAuth: []
+      description: Requires `AGENT` role. Debits agent float, credits user wallet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_msisdn, amount_minor, idempotency_key]
+              properties:
+                user_msisdn:
+                  type: string
+                  example: "+251912345678"
+                amount_minor:
+                  type: integer
+                  format: int64
+                  example: 50000
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Cash-in posted
+        "402":
+          description: Insufficient float
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /agent/cash-out:
+    post:
+      tags: [Agent]
+      summary: Agent collects cash from user wallet
+      operationId: agentCashOut
+      security:
+        - bearerAuth: []
+      description: Requires `AGENT` role. Debits user wallet, credits agent float.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_msisdn, amount_minor, user_pin_confirmation, idempotency_key]
+              properties:
+                user_msisdn:
+                  type: string
+                  example: "+251912345678"
+                amount_minor:
+                  type: integer
+                  format: int64
+                  example: 30000
+                user_pin_confirmation:
+                  type: string
+                  description: User's PIN to authorize the debit
+                  example: "111111"
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Cash-out posted
+        "402":
+          description: Insufficient user balance
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /agent/sync:
+    post:
+      tags: [Agent]
+      summary: Batch sync offline operations
+      operationId: agentSync
+      security:
+        - bearerAuth: []
+      description: Processes a batch of offline operations captured with UUIDv7 keys.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operations]
+              properties:
+                operations:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [idempotency_key, type, payload, captured_at]
+                    properties:
+                      idempotency_key:
+                        type: string
+                        format: uuid
+                      type:
+                        type: string
+                        enum: [CASH_IN, CASH_OUT, ONBOARD]
+                      payload:
+                        type: object
+                      captured_at:
+                        type: string
+                        format: date-time
+      responses:
+        "200":
+          description: Sync result with per-operation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  accepted: 3
+                  rejected: 0
+                  results:
+                    - idempotency_key: "01924b6f-1111-7000-8000-000000000001"
+                      status: "ACCEPTED"
+
+  /agent/onboard:
+    post:
+      tags: [Agent]
+      summary: Agent onboards a new user (offline-capable)
+      operationId: agentOnboard
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [msisdn, full_name, idempotency_key]
+              properties:
+                msisdn:
+                  type: string
+                  example: "+251912999888"
+                full_name:
+                  type: string
+                  example: "Tigist Haile"
+                region_id:
+                  type: string
+                  format: uuid
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: User onboarded
+
+  # ── BRANCH ────────────────────────────────────────────────────────────────
+
+  /branch/agents/{id}/approve:
+    post:
+      tags: [Branch]
+      summary: Approve a pending agent (scoped to own region)
+      operationId: approveAgent
+      security:
+        - bearerAuth: []
+      description: Requires `BRANCH_MANAGER` role.
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Agent approved
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /branch/settlements:
+    post:
+      tags: [Branch]
+      summary: Settle agent float (four-eyes gating)
+      operationId: createSettlement
+      security:
+        - bearerAuth: []
+      description: |
+        Requires `BRANCH_MANAGER` role.
+        Four-eyes: `second_authoriser_id` must differ from the caller's ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, amount_minor, second_authoriser_id, idempotency_key]
+              properties:
+                agent_id:
+                  type: string
+                  format: uuid
+                amount_minor:
+                  type: integer
+                  format: int64
+                second_authoriser_id:
+                  type: string
+                  format: uuid
+                  description: Must differ from caller (four-eyes)
+                idempotency_key:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Settlement posted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    get:
+      tags: [Branch]
+      summary: List settlements for the caller's region
+      operationId: listSettlements
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [PENDING, CONFIRMED]
+        - $ref: "#/components/parameters/QueryFrom"
+        - $ref: "#/components/parameters/QueryTo"
+        - $ref: "#/components/parameters/QueryLimit"
+        - $ref: "#/components/parameters/QueryOffset"
+      responses:
+        "200":
+          description: Settlement list
+
+  /branch/disputes:
+    get:
+      tags: [Branch]
+      summary: List open disputes in the caller's region
+      operationId: listDisputes
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/QueryLimit"
+        - $ref: "#/components/parameters/QueryOffset"
+      responses:
+        "200":
+          description: Dispute list
+
+  /branch/disputes/{id}/resolve:
+    post:
+      tags: [Branch]
+      summary: Resolve a transaction dispute (four-eyes)
+      operationId: resolveDispute
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolution, second_authoriser_id]
+              properties:
+                resolution:
+                  type: string
+                  enum: [ACCEPT, REJECT]
+                reason:
+                  type: string
+                  maxLength: 500
+                second_authoriser_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Dispute resolved
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /branch/kyc-review:
+    get:
+      tags: [Branch]
+      summary: List pending KYC upgrade requests
+      operationId: listKYCReviews
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: tier
+          schema:
+            type: integer
+            enum: [1, 2]
+        - $ref: "#/components/parameters/QueryLimit"
+        - $ref: "#/components/parameters/QueryOffset"
+      responses:
+        "200":
+          description: KYC review list
+
+  /branch/kyc-review/{id}/approve:
+    post:
+      tags: [Branch]
+      summary: Approve a KYC upgrade request
+      operationId: approveKYC
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: KYC tier upgraded
+
+  /branch/kyc-review/{id}/reject:
+    post:
+      tags: [Branch]
+      summary: Reject a KYC upgrade request
+      operationId: rejectKYC
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: KYC request rejected
+
+  # ── ADMIN ─────────────────────────────────────────────────────────────────
+
+  /admin/dashboard/summary:
+    get:
+      tags: [Admin]
+      summary: OLAP dashboard KPIs
+      operationId: dashboardSummary
+      security:
+        - bearerAuth: []
+      description: Requires `ADMIN` or `SUPER_ADMIN` role.
+      parameters:
+        - in: query
+          name: period
+          schema:
+            type: string
+            enum: [today, week, month]
+            default: today
+      responses:
+        "200":
+          description: Dashboard metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  active_users: 12450
+                  txns_today: 3821
+                  volume_today_minor: 45890000
+                  active_loans: 892
+                  p2p_volume_minor: 22000000
+                  agent_count: 157
+
+  /admin/audit:
+    get:
+      tags: [Admin]
+      summary: Paginated audit log
+      operationId: getAuditLog
+      security:
+        - bearerAuth: []
+      description: Requires `ADMIN` or `SUPER_ADMIN` role.
+      parameters:
+        - in: query
+          name: actor_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: action
+          schema:
+            type: string
+            example: "KYC_APPROVE"
+        - $ref: "#/components/parameters/QueryFrom"
+        - $ref: "#/components/parameters/QueryTo"
+        - $ref: "#/components/parameters/QueryLimit"
+        - $ref: "#/components/parameters/QueryOffset"
+      responses:
+        "200":
+          description: Audit entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  - id: "01924b6f-aaaa-7000-8000-000000000001"
+                    actor_id: "01924b6f-1234-7abc-8def-000000000002"
+                    actor_role: "ADMIN"
+                    action: "KYC_APPROVE"
+                    target: "user:01924b6f-1234-7abc-8def-000000000005"
+                    channel: "WEB"
+                    ip: "192.168.1.100"
+                    created_at: "2026-05-31T08:30:00Z"
+
+  /admin/config/{key}:
+    put:
+      tags: [Admin]
+      summary: Update a config value (four-eyes)
+      operationId: updateConfig
+      security:
+        - bearerAuth: []
+      description: Requires `SUPER_ADMIN` role. Four-eyes via `second_authoriser_id`.
+      parameters:
+        - in: path
+          name: key
+          required: true
+          schema:
+            type: string
+            example: "kyc.tier1.auto_approve_threshold"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value, second_authoriser_id, reason]
+              properties:
+                value:
+                  description: JSON value to store
+                second_authoriser_id:
+                  type: string
+                  format: uuid
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Config updated
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/flags/{flag}:
+    patch:
+      tags: [Admin]
+      summary: Toggle or set feature flag rollout
+      operationId: patchFlag
+      security:
+        - bearerAuth: []
+      description: Requires `SUPER_ADMIN` role.
+      parameters:
+        - in: path
+          name: flag
+          required: true
+          schema:
+            type: string
+            example: "loans.enabled"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+                rollout_pct:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                  default: 100
+      responses:
+        "200":
+          description: Flag updated
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/live:
+    get:
+      tags: [Admin]
+      summary: WebSocket live event stream
+      operationId: adminLiveStream
+      security:
+        - bearerAuth: []
+      description: |
+        Upgrade to WebSocket. Server pushes real-time domain events.
+        Event types: `TXN_POSTED`, `FRAUD_ALERT`, `KYC_SUBMITTED`, `AGENT_SYNC`
+      responses:
+        "101":
+          description: Switching Protocols (WebSocket)
+
+  # ── FRAUD ─────────────────────────────────────────────────────────────────
+
+  /fraud/alerts:
+    get:
+      tags: [Fraud]
+      summary: List open fraud alerts
+      operationId: listFraudAlerts
+      security:
+        - bearerAuth: []
+      description: Requires `ADMIN` or `SUPER_ADMIN` role.
+      parameters:
+        - in: query
+          name: severity
+          schema:
+            type: string
+            enum: [LOW, MEDIUM, HIGH]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [OPEN, DISMISSED, ESCALATED]
+            default: OPEN
+        - $ref: "#/components/parameters/QueryLimit"
+      responses:
+        "200":
+          description: Alert list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                data:
+                  - alert_id: "alert_01J3ABCDEF"
+                    severity: "HIGH"
+                    rule: "VELOCITY_BREACH"
+                    transaction_id: "01924b6f-1111-7000-8000-000000000001"
+                    status: "OPEN"
+                    created_at: "2026-05-31T09:00:00Z"
+
+  /fraud/alerts/{id}/disposition:
+    patch:
+      tags: [Fraud]
+      summary: Dismiss or escalate a fraud alert
+      operationId: disposeFraudAlert
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [DISMISS, ESCALATE]
+                notes:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Alert disposition saved
+
+  # ── USSD ──────────────────────────────────────────────────────────────────
+
+  /ussd/callback:
+    post:
+      tags: [USSD]
+      summary: USSD gateway callback (M2M)
+      operationId: ussdCallback
+      description: Called by the telco USSD gateway. Not for human clients.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, msisdn, input, service_code]
+              properties:
+                session_id:
+                  type: string
+                  example: "ussd_sess_abc123"
+                msisdn:
+                  type: string
+                  example: "+251912345678"
+                input:
+                  type: string
+                  example: "*888#"
+                service_code:
+                  type: string
+                  example: "*888"
+      responses:
+        "200":
+          description: USSD response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Mesob Wallet\n1. Check Balance\n2. Send Money\n3. Cash Out"
+                  continue:
+                    type: boolean
+                    example: true
+
+  # ── HEALTH ────────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: []
+      summary: Gateway liveness probe
+      operationId: healthCheck
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              example: { status: "ok" }
+
+# ---------------------------------------------------------------------------
+# COMPONENTS
+# ---------------------------------------------------------------------------
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: RS256 JWT access token. Obtain via /identity/login or /identity/token/refresh.
+
+  parameters:
+    PathId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Resource UUID
+    QueryFrom:
+      in: query
+      name: from
+      schema:
+        type: string
+        format: date
+      description: Filter from date (inclusive)
+    QueryTo:
+      in: query
+      name: to
+      schema:
+        type: string
+        format: date
+      description: Filter to date (inclusive)
+    QueryLimit:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+    QueryOffset:
+      in: query
+      name: offset
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+
+  schemas:
+    SuccessEnvelope:
+      type: object
+      properties:
+        data:
+          description: Response payload (schema varies by endpoint)
+        meta:
+          $ref: "#/components/schemas/MetaBlock"
+      required: [data]
+
+    ErrorEnvelope:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              example: "INSUFFICIENT_BALANCE"
+            message:
+              type: string
+              description: Human-readable message
+              example: "Your balance is too low for this transaction"
+        meta:
+          $ref: "#/components/schemas/MetaBlock"
+      required: [error]
+
+    MetaBlock:
+      type: object
+      properties:
+        request_id:
+          type: string
+          example: "req_01J3ABCDEF"
+        trace_id:
+          type: string
+          example: "trace_01J3ABCDEF"
+
+    IqubGroupCreate:
+      type: object
+      required: [name, cycle_amount_minor, cycle_days, member_msisdns]
+      properties:
+        name:
+          type: string
+          maxLength: 128
+          example: "Office Iqub 2026"
+        cycle_amount_minor:
+          type: integer
+          format: int64
+          description: Amount each member contributes per cycle (ETB cents)
+          example: 50000
+        cycle_days:
+          type: integer
+          description: Days per cycle (e.g. 30 = monthly)
+          example: 30
+        member_msisdns:
+          type: array
+          minItems: 2
+          maxItems: 20
+          items:
+            type: string
+          example: ["+251911111111", "+251922222222", "+251933333333"]
+
+    UserProfile:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        msisdn:
+          type: string
+        kyc_tier:
+          type: integer
+          enum: [0, 1, 2]
+        role:
+          type: string
+          enum: [USER, AGENT, BRANCH_MANAGER, ADMIN, SUPER_ADMIN]
+        status:
+          type: string
+          enum: [PENDING, ACTIVE, LOCKED, SUSPENDED]
+        preferred_lang:
+          type: string
+          enum: [am, om, ti, en]
+
+    KYCLimits:
+      type: object
+      description: Spending limits enforced per KYC tier (ETB cents)
+      properties:
+        tier:
+          type: integer
+        per_txn_minor:
+          type: integer
+          format: int64
+          description: "Tier 0: 500 ETB | Tier 1: 5,000 ETB | Tier 2: 50,000 ETB"
+        daily_minor:
+          type: integer
+          format: int64
+          description: "Tier 0: 2,000 ETB | Tier 1: 20,000 ETB | Tier 2: 200,000 ETB"
+        balance_minor:
+          type: integer
+          format: int64
+          description: "Tier 0: 5,000 ETB | Tier 1: 50,000 ETB | Tier 2: 500,000 ETB"
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid access token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: "UNAUTHORIZED"
+              message: "Access token missing or expired"
+
+    Forbidden:
+      description: Insufficient role/permission
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: "FORBIDDEN"
+              message: "This action requires BRANCH_MANAGER role"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: "NOT_FOUND"
+              message: "Resource not found"
+
+    Conflict:
+      description: Idempotency conflict or duplicate resource
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: "IDEMPOTENCY_MISMATCH"
+              message: "This idempotency key was already used with different parameters"
+
+    UnprocessableEntity:
+      description: Domain validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: "INVALID_MSISDN"
+              message: "Phone number must be in E.164 format"

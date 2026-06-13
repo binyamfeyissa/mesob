@@ -1,0 +1,19 @@
+FROM golang:1.25-alpine
+
+# Build tools required by some CGO dependencies
+RUN apk add --no-cache gcc musl-dev git
+
+# Install air — pin to a release that supports the Go toolchain in this image
+RUN go install github.com/air-verse/air@latest
+
+# Internal modules are not in the public checksum database
+ENV GONOSUMDB=github.com/mesob-wallet/*
+ENV GOWORK=off
+ENV GOFLAGS=
+
+# Working directory is overridden per-service via `working_dir` in docker-compose
+WORKDIR /workspace
+
+# Source code, shared modules, and go.work are all mounted as volumes at runtime.
+# The go module cache (/go/pkg/mod) is a named volume shared across all Go services.
+CMD ["air", "-c", ".air.toml"]

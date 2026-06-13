@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Mesob Agent",
+    "slug": "mesob-agent",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "mesob-agent",
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0F1B3D"
+      },
+      "package": "com.mesobwallet.agent"
+    },
+    "ios": {
+      "bundleIdentifier": "com.mesobwallet.agent",
+      "supportsTablet": false
+    },
+    "plugins": [
+      ["expo-router", { "root": "app" }],
+      "expo-secure-store"
+    ],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

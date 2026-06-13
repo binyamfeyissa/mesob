@@ -1,0 +1,77 @@
+openapi: "3.1.0"
+info:
+  title: Mesob Ledger Service
+  version: "1.0.0"
+  description: Internal double-entry ledger. All calls via mTLS from other services.
+servers:
+  - url: http://localhost:8002
+    description: Ledger Service
+paths:
+  /ledger/accounts:
+    post:
+      summary: Create a ledger account
+      responses:
+        "201":
+          description: Account created
+  /ledger/accounts/{id}/balance:
+    get:
+      summary: Get current balance
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Balance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account_id: {type: string}
+                  balance_minor: {type: integer, format: int64}
+                  currency: {type: string}
+  /ledger/accounts/{id}/entries:
+    get:
+      summary: Paginated entry history for an account
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+        - in: query
+          name: cursor
+          schema: {type: string}
+        - in: query
+          name: limit
+          schema: {type: integer, default: 50}
+      responses:
+        "200":
+          description: Entry list
+  /ledger/transactions:
+    post:
+      summary: Post a balanced transaction
+      responses:
+        "201":
+          description: Transaction posted
+  /ledger/transactions/{id}/rev:
+    post:
+      summary: Reverse a posted transaction
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+      responses:
+        "201":
+          description: Reversal posted

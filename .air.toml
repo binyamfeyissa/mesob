@@ -1,0 +1,22 @@
+root = "."
+tmp_dir = "/tmp/air"
+
+[build]
+  # Builds the server binary from the standard Mesob service layout
+  cmd        = "go build -o /tmp/air/server ./cmd/server"
+  bin        = "/tmp/air/server"
+  include_ext = ["go"]
+  exclude_dir = ["vendor", "testdata", "tmp", ".git"]
+  exclude_regex = ["_test\\.go$"]
+  # 500 ms debounce — avoids re-triggering on each saved file in a multi-file edit
+  delay      = 500
+  kill_delay = "500ms"
+  send_interrupt = true
+  rerun      = false
+
+[log]
+  time      = true
+  main_only = false
+
+[misc]
+  clean_on_exit = true

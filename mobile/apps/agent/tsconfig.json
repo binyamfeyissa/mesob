@@ -1,0 +1,15 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@mesob/sync/*": ["../../src/sync/*"],
+      "@mesob/api/*": ["../../src/api/*"],
+      "@mesob/i18n": ["../../src/i18n/index"],
+      "@mesob/db/*": ["../../src/db/*"],
+      "@mesob/components/*": ["../../src/components/*"],
+      "@mesob/features/*": ["../../src/features/*"]
+    }
+  }
+}
